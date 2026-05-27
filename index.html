@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>solhann.net — app gallery</title>
+  <meta name="description" content="A gallery of tiny web things. Built, shipped, and served on the solhann.net platform.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Press+Start+2P&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%95%B9%EF%B8%8F%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+  <div class="scanlines" aria-hidden="true"></div>
+
+  <div class="topbar">
+    <a class="chip home" href="https://solhann.net" title="back to solhann.net">&larr; HOME</a>
+    <button class="chip" id="themeToggle" type="button" aria-label="toggle dark mode">DARK</button>
+  </div>
+
+  <header class="masthead">
+    <h1 class="wordmark">solhann<span class="dot">.</span>net<span class="caret" aria-hidden="true"></span></h1>
+    <p class="tagline">a gallery of tiny web things</p>
+    <p class="prompt" id="prompt">&#9656; select an app to play</p>
+  </header>
+
+  <main>
+    <section class="gallery" id="gallery" aria-live="polite" aria-busy="true"></section>
+  </main>
+
+  <footer class="footer">
+    <span id="appcount">&mdash;</span>
+    <span class="sep">//</span>
+    <a href="https://github.com/sol-apps" target="_blank" rel="noopener">github.com/sol-apps</a>
+    <span class="sep">//</span>
+    <span>shipped on the solhann pipeline</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
