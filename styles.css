@@ -142,6 +142,18 @@ body {
 .card:not(.flipped):active .face.front { transform:translate(2px,2px); box-shadow:3px 3px 0 var(--shadow); }
 
 .face.front { align-items:center; justify-content:center; text-align:center; }
+
+/* source-link chip (top-right of card front) */
+.src {
+  position:absolute; top:10px; right:10px;
+  font-family:var(--pix); font-size:8px; line-height:1;
+  padding:6px 7px; border:2px solid var(--line); border-radius:4px;
+  background:var(--panel); color:var(--ink); cursor:pointer;
+  box-shadow:2px 2px 0 var(--shadow);
+  transition:transform .08s, box-shadow .08s;
+}
+.src:hover { transform:translate(-1px,-1px); box-shadow:3px 3px 0 var(--shadow); }
+.src:active { transform:translate(2px,2px); box-shadow:0 0 0 var(--shadow); }
 .face.back { transform:rotateY(180deg); padding:0; overflow:hidden; }
 
 /* front */
