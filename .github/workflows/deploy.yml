@@ -22,6 +22,14 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.SERVER_IP }}" > ~/.ssh/known_hosts 2>/dev/null
 
+      # Cache-bust .css/.js references in every .html so browsers always pick up the latest deploy.
+      # Idempotent: only rewrites links that don't already carry a query string.
+      - name: Cache-bust asset URLs in HTML
+        run: |
+          v="${GITHUB_SHA:0:7}"
+          find . -maxdepth 3 -name '*.html' -not -path './.git/*' \
+            -exec sed -i -E "s#(\.(js|css))\"#\1?v=${v}\"#g" {} +
+
       # Key is jailed to `rrsync /var/www/apps`, so the destination is RELATIVE -> create/ = /var/www/apps/create/
       - name: Deploy via rsync
         run: |
