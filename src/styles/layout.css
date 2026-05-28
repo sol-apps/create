@@ -1,0 +1,29 @@
+/* ============================================================
+   topbar + masthead
+   ============================================================ */
+
+.topbar {
+  display:flex; justify-content:space-between; align-items:center;
+  padding:18px 0 8px;
+  position:sticky; top:0; z-index:50;
+}
+
+.masthead { text-align:center; padding:clamp(28px,7vw,70px) 0 clamp(24px,5vw,44px); }
+.wordmark {
+  font-family:var(--pix);
+  font-size:clamp(1.5rem, 6.5vw, 4rem);
+  letter-spacing:1px; line-height:1.15;
+  text-shadow:4px 4px 0 var(--shadow);
+  display:inline-flex; align-items:baseline; gap:.05em;
+}
+.wordmark .dot { color:var(--accent); }
+.caret {
+  display:inline-block; width:.55em; height:1em;
+  margin-left:.15em; background:var(--accent);
+  transform:translateY(.12em);
+  animation:blink 1.05s steps(1) infinite;
+}
+.prompt {
+  margin-top:14px; font-family:var(--pix); font-size:10px;
+  color:var(--accent); animation:blink 1.4s steps(1) infinite;
+}

@@ -1,0 +1,80 @@
+/* ============================================================
+   solhann.net — base tokens, reset, body, scanlines, chip
+   ============================================================ */
+
+:root {
+  --bg:#FFB84D;            /* signature amber */
+  --bg2:#ffc870;
+  --ink:#2b2b29;
+  --muted:#74726a;
+  --panel:#fffaf0;
+  --line:#2b2b29;          /* borders */
+  --shadow:#2b2b29;        /* hard offset shadow */
+  --accent:#D56062;        /* coral */
+  --link:#1f5fd0;
+  --pix:"Press Start 2P", monospace;
+  --body:"Orbitron", sans-serif;
+  --r:6px;
+}
+[data-theme="dark"] {
+  --bg:#3f403e;
+  --bg2:#4a4b48;
+  --ink:#FFB84D;
+  --muted:#b9b08f;
+  --panel:#4b4c49;
+  --line:#1b1b1a;
+  --shadow:#141413;
+  --accent:#ff9aa0;
+  --link:#809FFF;
+}
+
+* { margin:0; box-sizing:border-box; }
+
+html, body { min-height:100%; }
+
+body {
+  font-family:var(--body);
+  color:var(--ink);
+  background:
+    radial-gradient(120% 90% at 50% -10%, var(--bg2), transparent 60%),
+    var(--bg);
+  background-attachment:fixed;
+  padding:0 clamp(14px, 4vw, 48px) 64px;
+  -webkit-font-smoothing:antialiased;
+  transition:background-color .25s ease, color .25s ease;
+  overflow-x:hidden;
+}
+
+/* CRT scanline atmosphere */
+.scanlines {
+  position:fixed; inset:0; z-index:9999; pointer-events:none;
+  background:repeating-linear-gradient(
+    to bottom, rgba(0,0,0,.05) 0 1px, transparent 1px 3px);
+  mix-blend-mode:multiply; opacity:.55;
+}
+[data-theme="dark"] .scanlines { mix-blend-mode:overlay; opacity:.25; }
+
+/* shared brutalist chip */
+.chip {
+  font-family:var(--pix);
+  font-size:10px;
+  line-height:1;
+  color:var(--ink);
+  background:var(--panel);
+  border:3px solid var(--line);
+  border-radius:var(--r);
+  padding:10px 12px;
+  cursor:pointer;
+  text-decoration:none;
+  box-shadow:3px 3px 0 var(--shadow);
+  transition:transform .08s ease, box-shadow .08s ease;
+  display:inline-flex; align-items:center; gap:6px;
+}
+.chip:hover { transform:translate(-2px,-2px); box-shadow:5px 5px 0 var(--shadow); }
+.chip:active { transform:translate(2px,2px); box-shadow:0 0 0 var(--shadow); }
+
+@keyframes blink { 50% { opacity:0; } }
+
+@media (prefers-reduced-motion:reduce) {
+  *, .card { animation:none !important; transition:none !important; }
+}
