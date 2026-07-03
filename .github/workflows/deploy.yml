@@ -32,7 +32,7 @@ jobs:
           mkdir -p ~/.ssh
           printf '%s\n' "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.SERVER_IP }}" > ~/.ssh/known_hosts 2>/dev/null
+          printf '%s\n' "${{ secrets.SERVER_HOST_KEY }}" > ~/.ssh/known_hosts
 
       # Key is jailed to `rrsync /var/www/apps`, so the destination is RELATIVE -> create/ = /var/www/apps/create/
       # Vite emits hashed asset filenames, so no cache-bust pass is needed.
