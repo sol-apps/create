@@ -22,8 +22,10 @@ routerAdd("GET", "/api/gallery", (e) => {
   const TTL_MS = 15 * 60 * 1000;
   const store = $app.store();
 
-  const cachedAt = store.get("gallery_t");
-  const cachedJSON = store.get("gallery_json");
+  // versioned keys: bumping them abandons any stale cache surviving a JSVM
+  // reload in the Go-side store ($app.store() outlives hook redeploys)
+  const cachedAt = store.get("gallery_t_v2");
+  const cachedJSON = store.get("gallery_json_v2");
   const fresh = cachedJSON && cachedAt && Date.now() - cachedAt < TTL_MS;
   if (fresh) {
     return e.json(200, JSON.parse(cachedJSON));
@@ -55,14 +57,18 @@ routerAdd("GET", "/api/gallery", (e) => {
   };
 
   try {
-    const q = encodeURIComponent("org:" + ORG + " topic:" + TOPIC + " fork:true");
+    const q = encodeURIComponent("org:" + ORG + " topic:" + TOPIC + " fork:true is:public");
     const search = gh(
       "https://api.github.com/search/repositories?q=" + q + "&per_page=100&sort=updated",
       "application/vnd.github+json"
     );
     if (search.statusCode !== 200) throw new Error("github search http " + search.statusCode);
 
-    const apps = (search.json.items || []).map((r) => {
+    // private repos never belong in the gallery. Anonymous search can't see
+    // them anyway; the is:public qualifier + this filter keep that true if a
+    // GITHUB_TOKEN is ever configured.
+    const repos = (search.json.items || []).filter((r) => !r.private);
+    const apps = repos.map((r) => {
       let meta = {};
       let body = "";
       try {
@@ -88,8 +94,8 @@ routerAdd("GET", "/api/gallery", (e) => {
     });
 
     const payload = JSON.stringify(apps);
-    store.set("gallery_json", payload);
-    store.set("gallery_t", Date.now());
+    store.set("gallery_json_v2", payload);
+    store.set("gallery_t_v2", Date.now());
     return e.json(200, apps);
   } catch (err) {
     if (cachedJSON) {
