@@ -73,6 +73,19 @@ body {
 .chip:hover { transform:translate(-2px,-2px); box-shadow:5px 5px 0 var(--shadow); }
 .chip:active { transform:translate(2px,2px); box-shadow:0 0 0 var(--shadow); }
 
+/* cheat-code input — a chip that accepts typing */
+input.chip {
+  width:clamp(110px, 20vw, 160px);
+  text-transform:uppercase;
+  letter-spacing:1px;
+  cursor:text;
+}
+input.chip:hover, input.chip:active { transform:none; box-shadow:3px 3px 0 var(--shadow); }
+input.chip:focus { outline:none; border-color:var(--accent); }
+input.chip::placeholder { color:var(--muted); opacity:1; }
+input.chip:disabled { opacity:1; }
+input.chip.unlocked { color:var(--accent); border-color:var(--accent); animation:blink .5s steps(1) 4; }
+
 @keyframes blink { 50% { opacity:0; } }
 
 @media (prefers-reduced-motion:reduce) {
