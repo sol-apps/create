@@ -1,5 +1,8 @@
 name: Deploy to solhann.net
 
+# Thin caller — the real pipeline lives once in sol-apps/workflows.
+# The repo name IS the slug IS the subdomain; nothing here is app-specific.
+
 on:
   push:
     branches: [main]
@@ -11,33 +14,5 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          printf '%s\n' "${{ secrets.SERVER_HOST_KEY }}" > ~/.ssh/known_hosts
-
-      # Key is jailed to `rrsync /var/www/apps`, so the destination is RELATIVE -> create/ = /var/www/apps/create/
-      # Vite emits hashed asset filenames, so no cache-bust pass is needed.
-      - name: Deploy via rsync
-        run: |
-          rsync -rlptz --delete \
-            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes" \
-            ./dist/ "sol@${{ secrets.SERVER_IP }}:create/"
+    uses: sol-apps/workflows/.github/workflows/deploy.yml@main
+    secrets: inherit
