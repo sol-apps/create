@@ -106,7 +106,7 @@ input.chip.unlocked { color:var(--accent); border-color:var(--accent); animation
   font-family:var(--pix);
   font-size:clamp(1.05rem, 6.5vw, 4rem);
   letter-spacing:1px; line-height:1.15;
-  text-shadow:4px 4px 0 var(--shadow);
+  text-shadow:4px 4px 0 rgba(0,0,0,.18);
   display:inline-flex; align-items:baseline; gap:.05em;
 }
 .wordmark .dot { color:var(--accent); }
