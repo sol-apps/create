@@ -2,10 +2,6 @@
  *
  * Today: an anonymous, persisted, crypto-random owner id. That id gives
  * PERSISTENCE, not security — anyone holding it can read/write its rows.
- * Don't build anything on this that would hurt if a row leaked.
- *
- * Upgrade path to real auth: change the internals here (and the collection
- * rules to `@request.auth.id`); app code using PBAuth stays unchanged.
  */
 const PBAuth = (() => {
   const KEY = 'solhann_owner_id';
