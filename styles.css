@@ -162,7 +162,7 @@ input.chip.unlocked { color:var(--accent); border-color:var(--accent); animation
   font-family:var(--pix); font-size:clamp(.7rem,2.4vw,.92rem);
   line-height:1.45; margin-top:20px; word-break:break-word;
 }
-.card-actions { margin-top:auto; padding-top:18px; display:flex; gap:10px; }
+.card-actions { margin-top:24px; display:flex; gap:10px; }
 .btn {
   flex:1; font-family:var(--pix); font-size:8px; line-height:1.4;
   padding:9px 6px; border:2px solid var(--line); border-radius:var(--r);
