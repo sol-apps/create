@@ -89,8 +89,10 @@
       <article class="card" style="animation-delay:${i * 70}ms" data-url="${esc(a.url)}" data-repo="${esc(a.repo)}">
         <div class="card-inner">
           <div class="face front">
-            <div class="emoji">${esc(a.emoji)}</div>
-            <h2 class="card-title">${esc(a.title)}</h2>
+            <div class="card-head">
+              <div class="emoji">${esc(a.emoji)}</div>
+              <h2 class="card-title">${esc(a.title)}</h2>
+            </div>
             <div class="card-actions">
               <button class="btn primary" data-act="launch">&#9656; LAUNCH</button>
               <button class="btn" data-act="code" title="view source on GitHub">&lt;/&gt;</button>
