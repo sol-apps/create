@@ -25,7 +25,7 @@ routerAdd("GET", "/api/gallery", (e) => {
   // Unlisted apps: stripped from the public payload, included only when the
   // caller presents the passkey (?key=). Compared by sha256 so the plaintext
   // never lives in this public repo.
-  const HIDDEN = ["architecture", "desk"];
+  const HIDDEN = ["architecture", "desk", "greenlight"];
   const KEY_HASH = "e7749c35f442f154e3a644e88a23a608f22f0d22afdf548f3f010afc34e3f7ad";
   const key = e.request.url.query().get("key") || "";
   const unlocked = key !== "" && $security.sha256(key) === KEY_HASH;
