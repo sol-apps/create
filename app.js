@@ -70,7 +70,6 @@
     gallery.setAttribute("aria-busy", "false");
     if (prompt) prompt.style.display = "none";
     gallery.innerHTML = `<div class="notice">
-      <div class="coin">&#129689;</div>
       <div class="big">NO APPS INSERTED YET</div>
       <div class="sub">Tag a repo in <a href="https://github.com/${ORG}" target="_blank" rel="noopener">${ORG}</a>
       with the <code>solhann-app</code> topic and it appears here automatically.</div>
@@ -90,7 +89,6 @@
         <div class="card-inner">
           <div class="face front">
             <div class="card-head">
-              <div class="emoji">${esc(a.emoji)}</div>
               <h2 class="card-title">${esc(a.title)}</h2>
             </div>
             <div class="card-actions">
@@ -121,7 +119,7 @@
   async function loadGallery(gallery, prompt, key) {
     renderLoading(gallery);
     try {
-      const res = await fetch("/api/gallery" + (key ? "?key=" + encodeURIComponent(key) : ""));
+      const res = await fetch("/api/gallery?featured=1" + (key ? "&key=" + encodeURIComponent(key) : ""));
       if (!res.ok) throw new Error(`http ${res.status}`);
       render(gallery, prompt, await res.json());
     } catch {

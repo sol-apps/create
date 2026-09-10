@@ -1,6 +1,6 @@
 /// <reference path="../pb_data/types.d.ts" />
 /*
- * GET /api/gallery -> [{slug,title,description,emoji,url,repo,readme}]
+ * GET /api/gallery[?featured=1][&key=] -> [{slug,title,description,emoji,url,repo,readme}]
  *
  * Server-side discovery for the gallery: proxies the GitHub org search
  * (org:sol-apps topic:solhann-app) plus each repo's README so visitors
@@ -26,10 +26,20 @@ routerAdd("GET", "/api/gallery", (e) => {
   // caller presents the passkey (?key=). Compared by sha256 so the plaintext
   // never lives in this public repo.
   const HIDDEN = ["architecture", "desk", "greenlight"];
+  // ?featured=1 is the create.solhann.net gallery's own view: only these apps,
+  // whatever HIDDEN says. The unfiltered route stays as it was because the
+  // greenlight shelf reads it anonymously and needs every app.
+  const FEATURED = ["snake-in-the-box", "mcr-events", "swarm-lab", "architecture", "cymbal-on-website"];
   const KEY_HASH = "e7749c35f442f154e3a644e88a23a608f22f0d22afdf548f3f010afc34e3f7ad";
-  const key = e.request.url.query().get("key") || "";
+  const query = e.request.url.query();
+  const key = query.get("key") || "";
   const unlocked = key !== "" && $security.sha256(key) === KEY_HASH;
-  const expose = (apps) => (unlocked ? apps : apps.filter((a) => HIDDEN.indexOf(a.slug) === -1));
+  const featured = query.get("featured") === "1";
+  const expose = (apps) => {
+    if (unlocked) return apps;
+    if (featured) return apps.filter((a) => FEATURED.indexOf(a.slug) !== -1);
+    return apps.filter((a) => HIDDEN.indexOf(a.slug) === -1);
+  };
 
   // versioned keys: bumping them abandons any stale cache surviving a JSVM
   // reload in the Go-side store ($app.store() outlives hook redeploys)

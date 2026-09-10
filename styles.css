@@ -154,15 +154,11 @@ input.chip.unlocked { color:var(--accent); border-color:var(--accent); animation
 
 .face.front { align-items:center; justify-content:space-between; text-align:center; }
 
-/* emoji + title grow to fill the space above the buttons and stay centred,
+/* the title grows to fill the space above the buttons and stays centred,
    so the buttons keep a consistent position no matter the title length */
 .card-head {
   flex:1 1 auto; min-height:0; width:100%;
-  display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
-}
-.emoji {
-  font-size:clamp(2.4rem,7vw,3.4rem); line-height:1;
-  filter:drop-shadow(2px 3px 0 rgba(0,0,0,.18));
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
 }
 .card-title {
   font-family:var(--pix); font-size:clamp(.6rem,2vw,.8rem);
@@ -200,7 +196,6 @@ input.chip.unlocked { color:var(--accent); border-color:var(--accent); animation
 }
 .notice .big { font-family:var(--pix); font-size:clamp(.9rem,3vw,1.3rem); line-height:1.6; }
 .notice .sub { margin-top:16px; font-weight:500; color:var(--muted); line-height:1.6; }
-.notice .coin { font-size:3rem; animation:blink 1s steps(1) infinite; display:inline-block; }
 .notice a { color:var(--link); font-weight:700; }
 /* ============================================================
    mobile — denser 2-up grid, stacked buttons so they always fit
@@ -216,8 +211,6 @@ input.chip.unlocked { color:var(--accent); border-color:var(--accent); animation
   .card { height:215px; }
   .skel { height:215px; }
   .face { padding:14px; border-width:3px; }
-  .card-head { gap:10px; }
-  .emoji { font-size:clamp(2rem,10vw,2.7rem); }
   .card-title { font-size:clamp(.52rem,3vw,.66rem); line-height:1.4; -webkit-line-clamp:3; }
   .card-actions { flex-direction:column; margin-top:12px; gap:8px; }
   .btn { font-size:8px; padding:9px 6px; }
