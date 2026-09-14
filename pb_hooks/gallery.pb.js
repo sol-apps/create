@@ -1,6 +1,6 @@
 /// <reference path="../pb_data/types.d.ts" />
 /*
- * GET /api/gallery[?featured=1][&key=] -> [{slug,title,description,emoji,url,repo,readme}]
+ * GET /api/gallery[?featured=1][&key=] -> [{slug,title,description,emoji,url,repo,readme,access}]
  *
  * Server-side discovery for the gallery: proxies the GitHub org search
  * (org:sol-apps topic:solhann-app) plus each repo's README so visitors
@@ -43,8 +43,8 @@ routerAdd("GET", "/api/gallery", (e) => {
 
   // versioned keys: bumping them abandons any stale cache surviving a JSVM
   // reload in the Go-side store ($app.store() outlives hook redeploys)
-  const cachedAt = store.get("gallery_t_v2");
-  const cachedJSON = store.get("gallery_json_v2");
+  const cachedAt = store.get("gallery_t_v3");
+  const cachedJSON = store.get("gallery_json_v3");
   const fresh = cachedJSON && cachedAt && Date.now() - cachedAt < TTL_MS;
   if (fresh) {
     return e.json(200, expose(JSON.parse(cachedJSON)));
@@ -101,6 +101,9 @@ routerAdd("GET", "/api/gallery", (e) => {
         }
       } catch (_) { /* no readme / mid-flight failure: degrade to repo metadata */ }
       const slug = (meta.slug || r.name).toLowerCase();
+      const topics = Array.isArray(r.topics) ? r.topics : [];
+      const access = topics.indexOf("access-keycloak") !== -1 ? "keycloak" :
+        (topics.indexOf("access-public") !== -1 ? "public" : "unclassified");
       return {
         slug: slug,
         title: meta.title || r.name,
@@ -109,12 +112,13 @@ routerAdd("GET", "/api/gallery", (e) => {
         url: "https://" + slug + ".solhann.net",
         repo: r.html_url,
         readme: body,
+        access: access,
       };
     });
 
     const payload = JSON.stringify(apps);
-    store.set("gallery_json_v2", payload);
-    store.set("gallery_t_v2", Date.now());
+    store.set("gallery_json_v3", payload);
+    store.set("gallery_t_v3", Date.now());
     return e.json(200, expose(apps));
   } catch (err) {
     if (cachedJSON) {
