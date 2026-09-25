@@ -167,14 +167,19 @@ input.chip.unlocked { color:var(--accent); border-color:var(--accent); animation
 }
 .card-actions { flex:0 0 auto; width:100%; margin-top:14px; display:flex; gap:10px; }
 .btn {
+  text-decoration:none;
   flex:1; font-family:var(--pix); font-size:8px; line-height:1.4;
   padding:9px 6px; border:2px solid var(--line); border-radius:var(--r);
   background:transparent; color:var(--ink); cursor:pointer;
   box-shadow:2px 2px 0 var(--shadow);
   transition:transform .08s, box-shadow .08s, background .12s;
 }
-.btn:hover { transform:translate(-1px,-1px); box-shadow:4px 4px 0 var(--shadow); }
-.btn:active { transform:translate(2px,2px); box-shadow:0 0 0 var(--shadow); }
+/* Stretch the launch link across the card; keep source independently clickable. */
+.btn.primary::after { content:""; position:absolute; inset:0; border-radius:14px; }
+.btn.source { position:relative; z-index:1; }
+.card:focus-within .face.front { outline:3px solid var(--accent); outline-offset:4px; }
+.btn:hover { box-shadow:4px 4px 0 var(--shadow); }
+.btn:active { box-shadow:0 0 0 var(--shadow); }
 .btn.primary { background:var(--accent); color:#fff; }
 [data-theme="dark"] .btn.primary { color:#1b1b1a; }
 /* ============================================================

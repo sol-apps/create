@@ -85,35 +85,21 @@
     gallery.innerHTML = apps
       .map(
         (a, i) => `
-      <article class="card" style="animation-delay:${i * 70}ms" data-url="${esc(a.url)}" data-repo="${esc(a.repo)}">
+      <article class="card" style="animation-delay:${i * 70}ms">
         <div class="card-inner">
           <div class="face front">
             <div class="card-head">
               <h2 class="card-title">${esc(a.title)}</h2>
             </div>
             <div class="card-actions">
-              <button class="btn primary" data-act="launch">&#9656; LAUNCH</button>
-              <button class="btn" data-act="code" title="view source on GitHub">&lt;/&gt;</button>
+              <a class="btn primary" href="${esc(a.url)}" target="_blank" rel="noopener" aria-label="Launch ${esc(a.title)}">&#9656; LAUNCH</a>
+              <a class="btn source" href="${esc(a.repo)}" target="_blank" rel="noopener" aria-label="View source for ${esc(a.title)}" title="view source on GitHub">&lt;/&gt;</a>
             </div>
           </div>
         </div>
       </article>`
       )
       .join("");
-  }
-
-  function wireInteractions(gallery) {
-    gallery.addEventListener("click", (e) => {
-      const target = e.target;
-      const card = target.closest(".card");
-      if (!card) return;
-      const act = target.closest("[data-act]")?.dataset.act;
-      if (act === "code") {
-        window.open(card.dataset.repo, "_blank", "noopener");
-        return;
-      }
-      window.open(card.dataset.url, "_blank", "noopener");
-    });
   }
 
   async function loadGallery(gallery, prompt, key) {
@@ -173,7 +159,6 @@
 
   if (themeToggle) initTheme(themeToggle);
   if (gallery) {
-    wireInteractions(gallery);
     void (async () => {
       const key = await savedKey();
       if (key && passkey) markUnlocked(passkey);
