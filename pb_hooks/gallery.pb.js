@@ -43,8 +43,8 @@ routerAdd("GET", "/api/gallery", (e) => {
 
   // versioned keys: bumping them abandons any stale cache surviving a JSVM
   // reload in the Go-side store ($app.store() outlives hook redeploys)
-  const cachedAt = store.get("gallery_t_v3");
-  const cachedJSON = store.get("gallery_json_v3");
+  const cachedAt = store.get("gallery_t_v4");
+  const cachedJSON = store.get("gallery_json_v4");
   const fresh = cachedJSON && cachedAt && Date.now() - cachedAt < TTL_MS;
   if (fresh) {
     return e.json(200, expose(JSON.parse(cachedJSON)));
@@ -109,7 +109,11 @@ routerAdd("GET", "/api/gallery", (e) => {
         title: meta.title || r.name,
         description: meta.description || r.description || "",
         emoji: meta.emoji || "🕹️",
-        url: "https://" + slug + ".solhann.net",
+        // The provisioner records where prod put the app as the repo's homepage (apps
+        // built by Greenlight live on its own domain now). Only an https origin with no
+        // path is taken from it; anything else falls back to the historical address.
+        url: /^https:\/\/[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(r.homepage || "")
+          ? r.homepage : "https://" + slug + ".solhann.net",
         repo: r.html_url,
         readme: body,
         access: access,
@@ -117,8 +121,8 @@ routerAdd("GET", "/api/gallery", (e) => {
     });
 
     const payload = JSON.stringify(apps);
-    store.set("gallery_json_v3", payload);
-    store.set("gallery_t_v3", Date.now());
+    store.set("gallery_json_v4", payload);
+    store.set("gallery_t_v4", Date.now());
     return e.json(200, expose(apps));
   } catch (err) {
     if (cachedJSON) {
