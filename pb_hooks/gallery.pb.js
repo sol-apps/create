@@ -26,18 +26,21 @@ routerAdd("GET", "/api/gallery", (e) => {
   // caller presents the passkey (?key=). Compared by sha256 so the plaintext
   // never lives in this public repo.
   const HIDDEN = ["architecture", "desk", "greenlight"];
-  // ?featured=1 is the create.solhann.net gallery's own view: only these apps,
-  // whatever HIDDEN says. The unfiltered route stays as it was because the
+  // ?featured=1 is the create.solhann.net gallery's own view: every app served on
+  // solhann.net — the owner's own; Greenlight's live on greenlit.page — whatever HIDDEN
+  // says, except these. So a new app is featured by default; to take one off the front
+  // page, add its slug here and push. The unfiltered route stays as it was because the
   // greenlight shelf reads it anonymously and needs every app.
-  const FEATURED = ["snake-in-the-box", "mcr-events", "swarm-lab", "architecture", "cymbal-on-website"];
+  const NOT_FEATURED = ["aba", "desk", "expenses", "style-lab", "uk-politics-stats"];
   const KEY_HASH = "e7749c35f442f154e3a644e88a23a608f22f0d22afdf548f3f010afc34e3f7ad";
   const query = e.request.url.query();
   const key = query.get("key") || "";
   const unlocked = key !== "" && $security.sha256(key) === KEY_HASH;
   const featured = query.get("featured") === "1";
+  const ownApp = (a) => /^https:\/\/[a-z0-9-]+\.solhann\.net$/.test(a.url);
   const expose = (apps) => {
     if (unlocked) return apps;
-    if (featured) return apps.filter((a) => FEATURED.indexOf(a.slug) !== -1);
+    if (featured) return apps.filter((a) => ownApp(a) && NOT_FEATURED.indexOf(a.slug) === -1);
     return apps.filter((a) => HIDDEN.indexOf(a.slug) === -1);
   };
 
