@@ -31,7 +31,7 @@ routerAdd("GET", "/api/gallery", (e) => {
   // says, except these. So a new app is featured by default; to take one off the front
   // page, add its slug here and push. The unfiltered route stays as it was because the
   // greenlight shelf reads it anonymously and needs every app.
-  const NOT_FEATURED = ["aba", "desk", "expenses", "style-lab", "uk-politics-stats"];
+  const NOT_FEATURED = ["aba", "desk", "expenses", "snake-in-the-box", "style-lab", "ubiquitous", "uk-politics-stats"];
   const KEY_HASH = "e7749c35f442f154e3a644e88a23a608f22f0d22afdf548f3f010afc34e3f7ad";
   const query = e.request.url.query();
   const key = query.get("key") || "";
