@@ -1,0 +1,18 @@
+name: Deploy to solhann.net
+
+# A push to main deploys; the first one created the app. The pipeline lives once in
+# sol-apps/create (simple.yml). The repo name is the slug is the subdomain.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    uses: sol-apps/create/.github/workflows/simple.yml@main
+    secrets: inherit

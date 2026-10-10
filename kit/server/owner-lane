@@ -1,0 +1,82 @@
+#!/bin/sh
+# owner-lane — the forced command on the org-wide CI key (GitHub org secret SERVER_SSH_KEY):
+#
+#   command="/usr/local/bin/owner-lane",restrict ssh-ed25519 AAAA...
+#
+# One key, three verbs, chosen by the first word the client sends:
+#
+#   rsync --server ... . <slug>/      The static lane, exactly as before: write-only,
+#                                     symlink-munging rrsync over /var/www/apps. Every
+#                                     public sol-apps repo publishes its site this way,
+#                                     Greenlight's included, so this branch never changes.
+#   pb-rsync --server ... . <slug>/   An owner app's pb_hooks/ and pb_migrations/ (CI sends
+#                                     it with rsync --rsync-path=pb-rsync). Handed to
+#                                     pb-deploy-jail <slug>, the slug-pinned write-only jail
+#                                     the per-app keys use, for an app recorded on the
+#                                     owner's domain and no other.
+#   provision <slug>                  Make sure the owner app <slug> has its PocketBase
+#                                     (sudo owner-app <slug>). A no-op once it has.
+#
+# The two owner verbs refuse Greenlight's apps and the platform: their host is on
+# greenlit.page, and only a reviewed merge changes them. Installed by install.sh in this
+# directory, which also has the way back (--rollback).
+set -u
+
+deny() { echo "owner-lane: denied: $*" >&2; exit 1; }
+
+[ -n "${SSH_ORIGINAL_COMMAND:-}" ] || deny "no command (interactive use not allowed)"
+
+# Whitespace-split exactly as rrsync does; -f so no token glob-expands.
+set -f
+# shellcheck disable=SC2086
+set -- $SSH_ORIGINAL_COMMAND
+set +f
+
+# A slug is one DNS label that fits the pb-<slug> user name (28).
+slug_ok() {
+  case "$1" in ''|-*|*-|*[!a-z0-9-]*) return 1 ;; esac
+  [ "${#1}" -le 28 ]
+}
+
+# Recorded on the owner's domain: the hosts inventory every provisioning writes.
+owner_app() {
+  d=$(sed -n 's/^OWNER_DOMAIN=//p' /etc/greenlight/instance.conf 2>/dev/null | tail -1)
+  [ -n "$d" ] || return 1
+  h=$(awk -v s="$1" '$1 == s { print $2; exit }' /etc/greenlight/hosts 2>/dev/null)
+  [ "$h" = "$1.$d" ]
+}
+
+case "${1:-}" in
+  rsync)
+    if [ -x /usr/bin/rrsync ]; then
+      exec /usr/bin/rrsync -wo -munge /var/www/apps
+    fi
+    exec rrsync -wo -munge /var/www/apps
+    ;;
+
+  pb-rsync)
+    case "$SSH_ORIGINAL_COMMAND" in
+      "pb-rsync --server "*) : ;;
+      *) deny "malformed pb-rsync command" ;;
+    esac
+    # Destination: the last word. pb-deploy-jail re-parses the whole command and
+    # refuses anything but exactly one destination under this slug.
+    for dest; do :; done
+    slug=${dest%%/*}
+    slug_ok "$slug" || deny "bad destination '$dest'"
+    owner_app "$slug" || deny "'$slug' is not one of the owner's apps"
+    SSH_ORIGINAL_COMMAND="rsync ${SSH_ORIGINAL_COMMAND#pb-rsync }"
+    export SSH_ORIGINAL_COMMAND
+    exec /usr/local/bin/pb-deploy-jail "$slug"
+    ;;
+
+  provision)
+    [ "$#" -eq 2 ] || deny "usage: provision <slug>"
+    slug_ok "$2" || deny "bad slug '$2'"
+    exec sudo -n /usr/local/bin/owner-app "$2"
+    ;;
+
+  *)
+    deny "unknown command '${1:-}'"
+    ;;
+esac
