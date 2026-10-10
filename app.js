@@ -105,7 +105,7 @@
   async function loadGallery(gallery, prompt, key) {
     renderLoading(gallery);
     try {
-      const res = await fetch("/api/gallery?featured=1" + (key ? "&key=" + encodeURIComponent(key) : ""));
+      const res = await fetch("/api/gallery" + (key ? "?key=" + encodeURIComponent(key) : ""));
       if (!res.ok) throw new Error(`http ${res.status}`);
       render(gallery, prompt, await res.json());
     } catch {

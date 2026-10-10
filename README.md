@@ -1,16 +1,19 @@
-# create.solhann.net — the app gallery
+# create.solhann.net — the app gallery, and the apps' kit
 
-The hub of the [solhann.net](https://solhann.net) platform: a card gallery of a curated
-set of the mini-apps deployed on it. Discovery is automatic — repos in the `sol-apps` org
-tagged with the `solhann-app` topic, titled from their README's YAML front matter — but
-the page asks for `/api/gallery?featured=1`, which returns only the apps in `FEATURED` in
-`pb_hooks/gallery.pb.js`. The cheat code shows everything. The unfiltered route is
-unchanged because the greenlight shelf reads it.
+Two things, one idea: this is the home of the apps on [solhann.net](https://solhann.net).
+
+**The gallery.** A card for each app. Discovery is automatic: public repos in the
+`sol-apps` org tagged `solhann-app` and served on solhann.net, titled from the front
+matter of their README. A new app is on the front page by default; to take one off it,
+add its slug to `NOT_FEATURED` in `pb_hooks/gallery.pb.js` and push. The cheat code shows
+those too.
+
+**The kit.** What the apps are made and run with: the deploy workflow every app calls
+(`.github/workflows/simple.yml`), the `create-app` skill, and the local tools. See
+[kit/README.md](kit/README.md). Nothing under `kit/` is published to the site.
 
 ## Deploys
 
-Push to `main` → the thin caller in `.github/workflows/deploy.yml` runs the shared
-pipeline in [`sol-apps/workflows`](https://github.com/sol-apps/workflows): statics rsync
-to the web root, `pb_hooks/` ships over the write-only hooks lane, assets get
-cache-busted with `?v=<sha>`. Live at <https://create.solhann.net> in ~30s.
-
+A push to `main` is the deploy, here as for every app: the site is copied to the web
+root, `pb_hooks/` goes to this app's PocketBase, and `.js`/`.css` links get `?v=<sha>`.
+Live at <https://create.solhann.net> in about 30 seconds.
