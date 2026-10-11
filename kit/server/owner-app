@@ -1,22 +1,25 @@
 #!/usr/bin/env bash
-# owner-app <slug> — give one of the owner's apps its PocketBase, or confirm it has one.
-# Root. CI reaches it through owner-lane's `provision` verb (sudo, no password). By hand:
+# owner-app <slug> — give an app its PocketBase, or confirm it has one. Root. The deploy
+# reaches it through owner-lane's `provision` verb (sudo, no password). By hand:
 #
 #   sudo owner-app <slug>
 #
-# An owner app lives at <slug>.OWNER_DOMAIN (solhann.net). A new one gets what
-# provision-app gives any app: a pb-<slug> user, a port, data/hooks/migrations dirs, the
-# hardened pocketbase@<slug> unit and its migrations watcher, and a Caddy block. Its
-# superuser is admin@solhann.net with the password every owner app shares
-# (owner-password), and there is no reviewed seed, access policy or identity client:
-# the owner's apps are his to run as he likes. Once an app has its instance and its
-# Caddy block this does nothing, so CI calls it on every deploy of a PocketBase app.
+# An app lives at <slug>.<DOMAIN> (/etc/solhann/conf). A new one gets a pb-<slug> user, a
+# port, data/hooks/migrations directories, the box's hardened pocketbase@<slug> unit
+# and its migrations watcher, and a Caddy block. Its superuser is admin@<DOMAIN> with the
+# password every app shares (owner-password). Once an app has its instance and its
+# Caddy block this does nothing, so the deploy calls it every time.
 #
-# It touches nothing else. Refused: a slug recorded or served on another host —
-# Greenlight's apps and the platform live on greenlit.page and change only through a
-# reviewed merge — a name this box's Forgejo holds for Greenlight (a repository there
-# that is not a mirror of GitHub), and a name with no public repository in sol-apps.
-# provision-app is unchanged and not used here.
+# Every app it sets up is recorded in /etc/solhann/apps ("<slug> <host>"), which is what
+# owner-lane, owner-password and owner-env go by.
+#
+# This box is shared, so a name something else on it already has is refused. Two
+# optional lines in /etc/solhann/conf say where to look:
+#   TAKEN_HOSTS=<file>   lines "<slug> <host>": refused if <slug> is there at another host
+#   TAKEN_FORGE=<url>    a Forgejo/Gitea API prefix; refused if <url>/<slug> is a
+#                        repository there and not a mirror
+# Also refused: a slug whose Caddy block serves another host, and a name with no public
+# repository in sol-apps on GitHub.
 set -euo pipefail
 
 PB_BIN=/usr/local/bin/pocketbase
@@ -25,12 +28,9 @@ LIB=/var/lib/pocketbase
 WWW=/var/www/apps
 CADDY_APPS=/etc/caddy/apps
 CADDYFILE=/etc/caddy/Caddyfile
-INSTANCE_CONF=/etc/greenlight/instance.conf
-HOSTS=/etc/greenlight/hosts
-FORGEJO_CONF=/etc/forgejo/app.ini
-FORGEJO_API=http://127.0.0.1:3000/api/v1
+CONF=/etc/solhann/conf
+APPS=/etc/solhann/apps
 GITHUB_API=https://api.github.com
-SU_EMAIL=admin@solhann.net
 PORT_BASE=8101
 
 die() { echo "✗ owner-app: $*" >&2; exit 1; }
@@ -41,10 +41,14 @@ SLUG="$1"
 [[ "$SLUG" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] && [ "${#SLUG}" -le 28 ] \
   || die "invalid slug '$SLUG' (lowercase letters, digits and hyphens; at most 28)"
 
-OWNER_DOMAIN=$(sed -n 's/^OWNER_DOMAIN=//p' "$INSTANCE_CONF" 2>/dev/null | tail -1)
-[[ "$OWNER_DOMAIN" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] \
-  || die "$INSTANCE_CONF names no OWNER_DOMAIN"
-HOST="$SLUG.$OWNER_DOMAIN"
+conf() { sed -n "s/^$1=//p" "$CONF" 2>/dev/null | tail -1; }
+DOMAIN=$(conf DOMAIN)
+[[ "$DOMAIN" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] \
+  || die "$CONF names no DOMAIN"
+TAKEN_HOSTS=$(conf TAKEN_HOSTS)
+TAKEN_FORGE=$(conf TAKEN_FORGE)
+SU_EMAIL="admin@$DOMAIN"
+HOST="$SLUG.$DOMAIN"
 PB_USER="pb-$SLUG"
 ENVF="$ETC/$SLUG.env"
 CADDYF="$CADDY_APPS/$SLUG.caddy"
@@ -57,23 +61,25 @@ exec 7>"$ETC/.owner-app.lock"
 flock 7
 
 # ── whose app is it? ──────────────────────────────────────────────────────────
-recorded_host() { awk -v s="$SLUG" '$1 == s { print $2; exit }' "$HOSTS" 2>/dev/null || true; }
+recorded_host() { awk -v s="$SLUG" '$1 == s { print $2; exit }' "$APPS" 2>/dev/null || true; }
 RECORDED=$(recorded_host)
+TAKEN=""
+[ -z "$TAKEN_HOSTS" ] || TAKEN=$(awk -v s="$SLUG" '$1 == s { print $2; exit }' "$TAKEN_HOSTS" 2>/dev/null || true)
 SERVED=""
 if [ -f "$CADDYF" ]; then
   SERVED=$(awk 'NF && $1 !~ /^#/ { gsub(/,/, "", $1); print $1; exit }' "$CADDYF")
   [ -n "$SERVED" ] || die "$CADDYF names no host; fix it by hand"
 fi
-for h in "$RECORDED" "$SERVED"; do
+for h in "$RECORDED" "$SERVED" "$TAKEN"; do
   [ -z "$h" ] || [ "$h" = "$HOST" ] \
-    || die "$SLUG is served at $h, not $HOST: it is not one of the owner's apps"
+    || die "$SLUG is served at $h, not $HOST: it is not one of the solhann apps"
 done
 
 record_host() {
   [ -n "$(recorded_host)" ] && return 0
-  install -d -m 755 "$(dirname "$HOSTS")"
-  ( flock 8; printf '%s %s\n' "$SLUG" "$HOST" >> "$HOSTS" ) 8>>"$HOSTS"
-  chmod 644 "$HOSTS"
+  install -d -m 755 "$(dirname "$APPS")"
+  ( flock 8; printf '%s %s\n' "$SLUG" "$HOST" >> "$APPS" ) 8>>"$APPS"
+  chmod 644 "$APPS"
 }
 
 if [ -f "$ENVF" ] && [ -f "$CADDYF" ] && [ ! -f "$MARK" ]; then
@@ -85,17 +91,17 @@ if [ -f "$ENVF" ] && [ ! -f "$MARK" ] && [ -z "$RECORDED" ]; then
   die "$SLUG has an instance this tool did not start and that is not recorded as $HOST; finish it by hand"
 fi
 
-# ── not Greenlight's, and a real repository ─────────────────────────────────
+# ── a free name, and a real repository ──────────────────────────────────────
 TMP=$(mktemp)
 trap 'rm -f "$TMP"' EXIT
-if [ -f "$FORGEJO_CONF" ]; then
-  code=$(curl -sS -m 10 -o "$TMP" -w '%{http_code}' "$FORGEJO_API/repos/sol-apps/$SLUG" 2>/dev/null) || code=000
+if [ -n "$TAKEN_FORGE" ]; then
+  code=$(curl -sS -m 10 -o "$TMP" -w '%{http_code}' "$TAKEN_FORGE/$SLUG" 2>/dev/null) || code=000
   case "$code" in
     404) : ;;
     200)
       python3 -c 'import json,sys; sys.exit(0 if json.load(open(sys.argv[1])).get("mirror") is True else 1)' "$TMP" \
-        || die "Greenlight holds '$SLUG' on this box's Forgejo; give the app another name" ;;
-    *) die "cannot ask this box's Forgejo whether '$SLUG' is Greenlight's (HTTP $code); try again" ;;
+        || die "the name '$SLUG' is taken on this box's git host; give the app another name" ;;
+    *) die "cannot ask this box's git host whether '$SLUG' is taken (HTTP $code); try again" ;;
   esac
 fi
 code=$(curl -sS -m 15 -o "$TMP" -w '%{http_code}' -H 'Accept: application/vnd.github+json' \
@@ -105,7 +111,7 @@ code=$(curl -sS -m 15 -o "$TMP" -w '%{http_code}' -H 'Accept: application/vnd.gi
 [ -s "$SHARED" ] || die "no shared superuser password yet; run: sudo owner-password"
 ( umask 077; printf '%s\n' "$HOST" > "$MARK" )
 
-# ── port: reuse, or allocate under provision-app's lock ─────────────────────
+# ── port: reuse, or allocate under the box's ports lock ─────────────────────
 exec 9>"$ETC/.ports.lock"
 flock 9
 if [ -f "$ENVF" ]; then
@@ -125,7 +131,7 @@ else
 fi
 flock -u 9
 
-# ── user and directories: provision-app's containment, unchanged ───────────
+# ── user and directories: each app contained in its own user ────────────────
 if ! id -u "$PB_USER" >/dev/null 2>&1; then
   useradd --system --no-create-home --shell /usr/sbin/nologin "$PB_USER"
   echo "▸ $SLUG: user $PB_USER"
@@ -136,13 +142,10 @@ install -d -o sol -g "$PB_USER" -m 2750 "$LIB/$SLUG/pb_hooks" "$LIB/$SLUG/pb_mig
 install -d -o sol -g sol "$WWW/$SLUG"
 
 # ── superuser: the shared password ──────────────────────────────────────────
-# This app's own file holds the same value, so a later provision-app run re-applies it.
 install -m 600 -o root -g root "$SHARED" "$ETC/$SLUG.superuser"
 PASS=$(cat "$SHARED")
-# PocketBase has no stdin mode, so the password is briefly in this box's process list,
-# as it is for provision-app.
-sudo -u "$PB_USER" env GREENLIGHT_IDENTITY_MODE=production \
-  "$PB_BIN" superuser upsert "$SU_EMAIL" "$PASS" \
+# PocketBase has no stdin mode, so the password is briefly in this box's process list.
+sudo -u "$PB_USER" "$PB_BIN" superuser upsert "$SU_EMAIL" "$PASS" \
   --dir "$LIB/$SLUG/pb_data" \
   --hooksDir "$LIB/$SLUG/pb_hooks" \
   --migrationsDir "$LIB/$SLUG/pb_migrations" >/dev/null </dev/null
@@ -161,7 +164,7 @@ if [ "$healthy" != 1 ]; then
   die "$SLUG: PocketBase did not come up on 127.0.0.1:$PB_PORT (journalctl -u pocketbase@$SLUG); nothing published"
 fi
 
-# ── Caddy: provision-app's block, validated before reload ──────────────────
+# ── Caddy: the app's block, validated before reload ─────────────────────────
 if [ ! -f "$CADDYF" ]; then
   cat > "$CADDYF" <<CADDY_EOF
 $HOST {
@@ -183,8 +186,8 @@ $HOST {
 	}
 }
 CADDY_EOF
-  # caddy validate needs CF_API_TOKEN: borrow the caddy service's environment, as
-  # provision-app does (EnvironmentFile= and inline Environment= both).
+  # caddy validate needs CF_API_TOKEN: borrow the caddy service's environment
+  # (EnvironmentFile= and inline Environment= both).
   while IFS= read -r line; do
     case "$line" in
       EnvironmentFile=*) f="${line#EnvironmentFile=}"; f="${f#-}"; [ -f "$f" ] && set -a && . "$f" && set +a ;;

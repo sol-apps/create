@@ -1,25 +1,25 @@
 #!/bin/sh
-# owner-lane — the forced command on the org-wide CI key (GitHub org secret SERVER_SSH_KEY):
+# owner-lane — the only thing the deploy key may run on prod (the key is the GitHub org
+# secret SERVER_SSH_KEY; its line in authorized_keys is):
 #
 #   command="/usr/local/bin/owner-lane",restrict ssh-ed25519 AAAA...
 #
 # One key, three verbs, chosen by the first word the client sends:
 #
-#   rsync --server ... . <slug>/      The static lane, exactly as before: write-only,
-#                                     symlink-munging rrsync over /var/www/apps. Every
-#                                     public sol-apps repo publishes its site this way,
-#                                     Greenlight's included, so this branch never changes.
-#   pb-rsync --server ... . <slug>/   An owner app's pb_hooks/ and pb_migrations/ (CI sends
-#                                     it with rsync --rsync-path=pb-rsync). Handed to
-#                                     pb-deploy-jail <slug>, the slug-pinned write-only jail
-#                                     the per-app keys use, for an app recorded on the
-#                                     owner's domain and no other.
-#   provision <slug>                  Make sure the owner app <slug> has its PocketBase
+#   rsync --server ... . <slug>/      A site: write-only, symlink-munging rrsync over
+#                                     /var/www/apps. Everything that deploys with this
+#                                     key publishes its site this way, so this branch
+#                                     never changes.
+#   pb-rsync --server ... . <slug>/   An app's pb_hooks/ and pb_migrations/ (the deploy
+#                                     sends it with rsync --rsync-path=pb-rsync). Handed
+#                                     to pb-deploy-jail <slug>, a write-only jail pinned
+#                                     to that app, and only for an app in /etc/solhann/apps.
+#   provision <slug>                  Make sure the app <slug> has its PocketBase
 #                                     (sudo owner-app <slug>). A no-op once it has.
 #
-# The two owner verbs refuse Greenlight's apps and the platform: their host is on
-# greenlit.page, and only a reviewed merge changes them. Installed by install.sh in this
-# directory, which also has the way back (--rollback).
+# The last two act only on the apps this side of the box owns: the ones recorded in
+# /etc/solhann/apps at <slug>.<DOMAIN>. Installed by install.sh in this directory, which
+# also has the way back (--rollback).
 set -u
 
 deny() { echo "owner-lane: denied: $*" >&2; exit 1; }
@@ -38,11 +38,11 @@ slug_ok() {
   [ "${#1}" -le 28 ]
 }
 
-# Recorded on the owner's domain: the hosts inventory every provisioning writes.
+# One of ours: recorded in /etc/solhann/apps (owner-app writes it) at <slug>.<DOMAIN>.
 owner_app() {
-  d=$(sed -n 's/^OWNER_DOMAIN=//p' /etc/greenlight/instance.conf 2>/dev/null | tail -1)
+  d=$(sed -n 's/^DOMAIN=//p' /etc/solhann/conf 2>/dev/null | tail -1)
   [ -n "$d" ] || return 1
-  h=$(awk -v s="$1" '$1 == s { print $2; exit }' /etc/greenlight/hosts 2>/dev/null)
+  h=$(awk -v s="$1" '$1 == s { print $2; exit }' /etc/solhann/apps 2>/dev/null)
   [ "$h" = "$1.$d" ]
 }
 
@@ -64,7 +64,7 @@ case "${1:-}" in
     for dest; do :; done
     slug=${dest%%/*}
     slug_ok "$slug" || deny "bad destination '$dest'"
-    owner_app "$slug" || deny "'$slug' is not one of the owner's apps"
+    owner_app "$slug" || deny "'$slug' is not one of the solhann apps"
     SSH_ORIGINAL_COMMAND="rsync ${SSH_ORIGINAL_COMMAND#pb-rsync }"
     export SSH_ORIGINAL_COMMAND
     exec /usr/local/bin/pb-deploy-jail "$slug"

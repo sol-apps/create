@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# owner-env <slug> — replace an app's runtime secrets. Root. From the laptop:
+#
+#   push-secrets <slug>        (pb-secret env <slug> | ssh prod sudo -n owner-env <slug>)
+#
+# Reads KEY=value lines on stdin (keys ALL-CAPS). They REPLACE everything in the app's
+# environment except its port, the app's PocketBase restarts, and its hooks read them
+# with $os.getenv("KEY"). If the app does not come back healthy the previous
+# environment is put back. Nothing is ever printed back.
+#
+#   owner-env <slug> --clear   remove every runtime secret
+#
+# Only for an app in /etc/solhann/apps. With nothing on stdin it refuses, so a broken
+# pipe cannot wipe an app's secrets.
+set -euo pipefail
+
+ETC=/etc/pocketbase
+CONF=/etc/solhann/conf
+APPS=/etc/solhann/apps
+
+die() { echo "✗ owner-env: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "run as root"
+SLUG="${1:-}"
+CLEAR=0
+case "$#:${2:-}" in
+  1:) ;;
+  2:--clear) CLEAR=1 ;;
+  *) die "usage: owner-env <slug> [--clear]" ;;
+esac
+[[ "$SLUG" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] && [ "${#SLUG}" -le 28 ] || die "invalid slug '$SLUG'"
+
+DOMAIN=$(sed -n 's/^DOMAIN=//p' "$CONF" 2>/dev/null | tail -1)
+[ -n "$DOMAIN" ] || die "$CONF names no DOMAIN"
+host=$(awk -v s="$SLUG" '$1 == s { print $2; exit }' "$APPS" 2>/dev/null || true)
+[ "$host" = "$SLUG.$DOMAIN" ] || die "'$SLUG' is not one of the solhann apps"
+ENVF="$ETC/$SLUG.env"
+[ -f "$ENVF" ] || die "$SLUG has no PocketBase (no $ENVF)"
+PB_PORT=$(sed -n 's/^PB_PORT=//p' "$ENVF" | tail -1)
+[[ "$PB_PORT" =~ ^[0-9]+$ ]] || die "$ENVF has no PB_PORT"
+
+tmp=$(mktemp)
+trap 'rm -f "$tmp"' EXIT
+printf 'PB_PORT=%s\n' "$PB_PORT" > "$tmp"
+n=0
+if [ "$CLEAR" = 0 ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -z "$line" ] && continue
+    case "$line" in *=*) ;; *) die "not KEY=value: a line with no '='; nothing changed" ;; esac
+    k="${line%%=*}"
+    [[ "$k" =~ ^[A-Z][A-Z0-9_]*$ ]] || die "bad key '$k' (A-Z, 0-9 and _ only); nothing changed"
+    [ "$k" != PB_PORT ] || die "PB_PORT is this box's to choose; nothing changed"
+    printf '%s\n' "$line" >> "$tmp"
+    n=$((n + 1))
+  done
+  [ "$n" -gt 0 ] || die "nothing on stdin; nothing changed (to remove every secret: owner-env $SLUG --clear)"
+fi
+
+cp -p "$ENVF" "$ENVF.prev"
+install -m 600 -o root -g root "$tmp" "$ENVF"
+systemctl try-restart "pocketbase@$SLUG"
+healthy=0
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  sleep 1
+  if curl -fsS -m 2 "http://127.0.0.1:$PB_PORT/api/health" >/dev/null 2>&1; then healthy=1; break; fi
+done
+if [ "$healthy" != 1 ]; then
+  install -m 600 -o root -g root "$ENVF.prev" "$ENVF"
+  systemctl try-restart "pocketbase@$SLUG" || true
+  rm -f "$ENVF.prev"
+  die "$SLUG did not come back healthy with the new secrets; the previous ones are back (journalctl -u pocketbase@$SLUG)"
+fi
+rm -f "$ENVF.prev"
+echo "✓ $SLUG: $n runtime secret(s) applied, instance restarted and healthy"
