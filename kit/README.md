@@ -7,10 +7,12 @@ under `kit/` is ever published to a site (the deploy workflow leaves it out).
     .github/workflows/simple.yml   the deploy every app calls: a push to main goes live,
                                    and a new repo's first push creates the app
     kit/skill/create-app/          the Claude Code skill that makes a new app
-    kit/skill/install-skill.sh     copies the skill to ~/.claude/skills after an edit
+    kit/skill/forum/               the skill for reading and posting to forum.solhann.net
+    kit/skill/install-skill.sh     copies the skills to ~/.claude/skills after an edit
     kit/bin/pb-dev                 run an app locally with its own PocketBase
     kit/bin/pb-secret              the laptop's secrets store
     kit/bin/push-secrets           send an app's runtime secrets to prod
+    kit/bin/forum                  read and post to the forum from a terminal
     kit/server/                    the scripts prod runs for these apps
     kit/tests/                     create-app and the server scripts, run for real against stand-ins
 

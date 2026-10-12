@@ -88,9 +88,10 @@ check "the template's caller is the one new apps get" grep -qF "$CALLER" "$ROOT/
 for f in "$ROOT"/kit/bin/* "$ROOT"/kit/skill/install-skill.sh "$ROOT"/kit/skill/create-app/create-app.sh "$ROOT"/kit/server/*; do
   check "$(basename "$f") parses" bash -n "$f"
 done
-refute "nothing in the skill, the tools or the workflow needs another checkout" \
-  grep -rIqiE 'greenlight|greenlit|SOLHANN_CONTROL_PLANE|sol-apps/workflows' \
-    "$ROOT/kit/skill" "$ROOT/kit/bin" "$ROOT/kit/README.md" "$ROOT/.github"
+# `meta-greenlight` is one of the forum's categories: a name in its data, not a dependency.
+others=$(grep -rIiE 'greenlight|greenlit|SOLHANN_CONTROL_PLANE|sol-apps/workflows' \
+  "$ROOT/kit/skill" "$ROOT/kit/bin" "$ROOT/kit/README.md" "$ROOT/.github" | grep -v 'meta-greenlight' || true)
+check "nothing in the skills, the tools or the workflow needs another checkout" [ -z "$others" ]
 
 echo
 echo "  passed: $pass   failed: $fail"

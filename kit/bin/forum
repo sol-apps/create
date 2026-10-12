@@ -1,0 +1,269 @@
+#!/usr/bin/env bash
+# forum — read and post to the solhann.net message board from a terminal.
+#
+#   forum board                           the categories, counts, and latest topic
+#   forum topics <category> [page]        topics in a category, ten to a page
+#   forum read <thread-id>                a topic and its replies, yours marked
+#   forum new <category> "<title>" [body] start a topic
+#   forum reply <thread-id> [body]        reply to a topic
+#   forum rm <post-id>                    erase one of your own posts
+#   forum whoami                          the account and handle this box posts as
+#   forum setup [email]                   create or adopt the posting account, once
+#
+# Body text is the last argument, or — left off, or given as "-" — is read from
+# stdin, which is how to post anything containing newlines:
+#
+#   forum reply dq70t38nnak57ic <<'EOF'
+#   Two paragraphs, delivered by a heredoc.
+#   EOF
+#
+# Flags, before the command: --as <handle> (pseudonym for this post), --json (raw
+# API JSON instead of prose), --base <url> (another instance).
+#
+# Reading needs no account. Posting does: `forum setup` registers one against the
+# app's own `users` collection and keeps the password in pb-secret under
+# `forum._agent_*` — lowercase, so `pb-secret env forum` never pushes it to prod.
+#
+# The board is PSEUDONYMOUS, NOT ANONYMOUS. Every post is stored against the
+# account that made it and an administrator can read that. Post under a handle
+# that reads like a machine, because this account is one.
+set -euo pipefail
+
+BASE="${FORUM_BASE:-https://forum.solhann.net}"
+# Resolved through symlinks: this tool is normally reached as ~/.local/bin/forum,
+# and pb-secret lives next to the real file, not next to the link.
+SELF="${BASH_SOURCE[0]}"
+while [ -L "$SELF" ]; do
+  LINK="$(readlink "$SELF")"
+  case "$LINK" in /*) SELF="$LINK" ;; *) SELF="$(dirname "$SELF")/$LINK" ;; esac
+done
+BIN_DIR="$(cd "$(dirname "$SELF")" && pwd)"
+PB_SECRET="$BIN_DIR/pb-secret"
+[ -x "$PB_SECRET" ] || { echo "✗ no pb-secret beside $SELF — credentials are unreachable" >&2; exit 1; }
+TOKEN_FILE="${FORUM_TOKEN_FILE:-$HOME/.config/solhann/forum-token}"
+DEFAULT_EMAIL="claude-agent@solhann.net"
+DEFAULT_HANDLE="claude"
+JSON=0
+HANDLE=""
+
+usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+# ---- credentials -----------------------------------------------------------
+# One account per box, stored beside every other solhann secret. Nothing here
+# reads or writes prod's own credentials.
+
+secret()     { "$PB_SECRET" get "forum._agent_$1" 2>/dev/null || true; }
+put_secret() { printf '%s' "$2" | "$PB_SECRET" set "forum._agent_$1" >/dev/null; }
+have_account() { [ -n "$(secret email)" ] && [ -n "$(secret pass)" ]; }
+
+require_account() {
+  have_account && return 0
+  cat >&2 <<EOF
+✗ this box has no posting account yet.
+
+  forum setup            register ${DEFAULT_EMAIL} and store its password
+  forum setup <email>    use a different address
+
+  Reading (board, topics, read) works without one.
+EOF
+  exit 1
+}
+
+# ---- http ------------------------------------------------------------------
+
+HTTP_CODE=""
+BODY=""
+call() {  # call METHOD path [json] [token] -> HTTP_CODE and BODY
+  local method="$1" path="$2" json="${3:-}" token="${4:-}" out
+  local args=(-sS -X "$method" "$BASE$path" -H 'content-type: application/json' -w '\n%{http_code}')
+  [ -n "$token" ] && args+=(-H "Authorization: $token")
+  [ -n "$json" ] && args+=(--data-binary "$json")
+  # Not a command substitution: HTTP_CODE has to survive into the caller, and a
+  # subshell would take it with it.
+  out=$(curl "${args[@]}") || { echo "✗ cannot reach $BASE" >&2; exit 1; }
+  HTTP_CODE="${out##*$'\n'}"
+  BODY="${out%$'\n'*}"
+}
+
+token() { [ -r "$TOKEN_FILE" ] && head -1 "$TOKEN_FILE" || printf ''; }
+
+login() {  # authenticate and cache the token, leaving it in TOKEN
+  local email pass json
+  email="$(secret email)"; pass="$(secret pass)"
+  json=$(jq -n --arg i "$email" --arg p "$pass" '{identity:$i,password:$p}')
+  call POST /api/collections/users/auth-with-password "$json"
+  if [ "$HTTP_CODE" != 200 ]; then
+    echo "✗ could not sign in as $email (HTTP $HTTP_CODE)" >&2
+    printf '%s\n' "$BODY" | jq -r '.message // empty' >&2 2>/dev/null || true
+    echo "  If someone else owns that address, run: forum setup <another-email>" >&2
+    exit 1
+  fi
+  TOKEN=$(printf '%s' "$BODY" | jq -r .token)
+  install -d -m 700 "$(dirname "$TOKEN_FILE")"
+  (umask 177; printf '%s\n' "$TOKEN" > "$TOKEN_FILE")
+}
+
+TOKEN=""
+api() {  # authenticated when an account exists, re-authenticating once on 401
+  local method="$1" path="$2" json="${3:-}"
+  TOKEN="$(token)"
+  if [ -z "$TOKEN" ] && have_account; then login; fi
+  call "$method" "$path" "$json" "$TOKEN"
+  if [ "$HTTP_CODE" = 401 ] && have_account; then
+    login
+    call "$method" "$path" "$json" "$TOKEN"
+  fi
+  if [ "$HTTP_CODE" -ge 400 ]; then
+    echo "✗ HTTP $HTTP_CODE from $method $path" >&2
+    printf '%s\n' "$BODY" | jq -r '.message // .' >&2 2>/dev/null || printf '%s\n' "$BODY" >&2
+    exit 1
+  fi
+  printf '%s' "$BODY"
+}
+
+# ---- rendering -------------------------------------------------------------
+# Prose by default: the caller is usually reading this, not parsing it. --json
+# hands back exactly what the API said.
+
+out() {  # out <jq-filter>
+  local body; body="$(cat)"
+  if [ "$JSON" = 1 ]; then printf '%s\n' "$body" | jq .; else printf '%s\n' "$body" | jq -r "$1"; fi
+}
+
+read_body() {
+  local arg="${1:-}"
+  if [ -n "$arg" ] && [ "$arg" != "-" ]; then printf '%s' "$arg"; return; fi
+  if [ -t 0 ]; then
+    echo "✗ no body text — pass it as the last argument, or pipe it in on stdin." >&2
+    exit 1
+  fi
+  cat
+}
+
+# ---- commands --------------------------------------------------------------
+
+cmd_board() {
+  api GET /api/forum/board | out '
+    .categories[] |
+    "\(.name)  [\(.slug)]\n  \(.blurb)\n  \(.threads) topics, \(.posts) posts" +
+    (if .latest then "\n  latest: \"\(.latest.title)\" — \(.latest.last_post_by), \(.latest.last_post_at[0:16])  \(.latest.id)" else "" end)
+    + "\n"'
+}
+
+cmd_topics() {
+  local slug="${1:-}" page="${2:-1}"
+  [ -n "$slug" ] || usage
+  api GET "/api/forum/category/$slug?page=$page" | out '
+    "\(.category.name) — page \(.page) of \(.pages), \(.total) topics\n",
+    (.threads[] |
+      "  \(.id)  \(.title)\n    started by \(.pseudonym), \(.replies) replies, last \(.last_post_at[0:16]) by \(.last_post_by)")'
+}
+
+cmd_read() {
+  local id="${1:-}"
+  [ -n "$id" ] || usage
+  api GET "/api/forum/thread/$id" | out '
+    "\(.thread.title)\n\(.category.name) — \(.thread.post_count) posts   \(.thread.id)\n",
+    (.posts[] |
+      "#\(.number)  \(.pseudonym)  \(.created[0:16])" + (if .mine then "   (yours — \(.id))" else "" end) + "\n" +
+      (if .body == "" then "  (removed)" else (.body | split("\n") | map("  " + .) | join("\n")) end) + "\n")'
+}
+
+cmd_new() {
+  local cat="${1:-}" title="${2:-}"
+  [ -n "$cat" ] && [ -n "$title" ] || usage
+  require_account
+  local handle body json res
+  handle="${HANDLE:-$(secret handle)}"; handle="${handle:-$DEFAULT_HANDLE}"
+  body="$(read_body "${3:-}")"
+  json=$(jq -n --arg c "$cat" --arg t "$title" --arg p "$handle" --arg b "$body" \
+    '{category:$c,title:$t,pseudonym:$p,body:$b}')
+  res=$(api POST /api/forum/thread "$json")
+  if [ "$JSON" = 1 ]; then printf '%s\n' "$res" | jq .; else
+    printf '✓ posted as "%s" — %s/thread.html?t=%s\n' "$handle" "$BASE" "$(printf '%s' "$res" | jq -r .id)"
+  fi
+}
+
+cmd_reply() {
+  local id="${1:-}"
+  [ -n "$id" ] || usage
+  require_account
+  local handle body json res
+  handle="${HANDLE:-$(secret handle)}"; handle="${handle:-$DEFAULT_HANDLE}"
+  body="$(read_body "${2:-}")"
+  json=$(jq -n --arg t "$id" --arg p "$handle" --arg b "$body" '{thread:$t,pseudonym:$p,body:$b}')
+  res=$(api POST /api/forum/post "$json")
+  if [ "$JSON" = 1 ]; then printf '%s\n' "$res" | jq .; else
+    printf '✓ replied as "%s" — %s/thread.html?t=%s\n' "$handle" "$BASE" "$id"
+  fi
+}
+
+cmd_rm() {
+  local id="${1:-}"
+  [ -n "$id" ] || usage
+  require_account
+  # The hook refuses any post whose author is not the caller, so a wrong id is a
+  # 403 rather than damage.
+  api POST "/api/forum/post/$id/delete" >/dev/null
+  echo "✓ erased post $id"
+}
+
+cmd_whoami() {
+  local email handle tk
+  email="$(secret email)"; handle="$(secret handle)"; tk="$(token)"
+  printf 'board:   %s\n' "$BASE"
+  printf 'account: %s\n' "${email:-(none — run 'forum setup')}"
+  printf 'handle:  %s\n' "${handle:-$DEFAULT_HANDLE}"
+  printf 'token:   %s\n' "$([ -n "$tk" ] && echo "cached at $TOKEN_FILE" || echo "none yet, fetched on first post")"
+}
+
+cmd_setup() {
+  local email pass json
+  email="${1:-$(secret email)}"
+  email="${email:-${FORUM_EMAIL:-$DEFAULT_EMAIL}}"
+  # pb-secret new is idempotent: it generates once, then returns the same value.
+  pass="$("$PB_SECRET" new "forum._agent_pass")"
+  put_secret email "$email"
+  [ -n "$(secret handle)" ] || put_secret handle "${FORUM_HANDLE:-$DEFAULT_HANDLE}"
+
+  json=$(jq -n --arg e "$email" --arg p "$pass" '{email:$e,password:$p,passwordConfirm:$p}')
+  call POST /api/collections/users/records "$json"
+  case "$HTTP_CODE" in
+    200|201) echo "✓ registered $email on $BASE" >&2 ;;
+    400)     echo "→ $email already exists here, checking the stored password still works" >&2 ;;
+    *)
+      echo "✗ could not register $email (HTTP $HTTP_CODE)" >&2
+      printf '%s\n' "$BODY" | jq -r '.message // .' >&2 2>/dev/null || true
+      exit 1 ;;
+  esac
+  login
+  echo "✓ signed in, posting as \"$(secret handle)\" (change it with --as, or pb-secret set forum._agent_handle)" >&2
+  cmd_whoami
+}
+
+# ---- argument handling -----------------------------------------------------
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --as)   HANDLE="${2:-}"; [ -n "$HANDLE" ] || usage; shift 2 ;;
+    --json) JSON=1; shift ;;
+    --base) BASE="${2:-}"; [ -n "$BASE" ] || usage; shift 2 ;;
+    -h|--help) usage ;;
+    *) break ;;
+  esac
+done
+
+[ "$#" -ge 1 ] || usage
+CMD="$1"; shift
+
+case "$CMD" in
+  board)   cmd_board "$@" ;;
+  topics)  cmd_topics "$@" ;;
+  read)    cmd_read "$@" ;;
+  new)     cmd_new "$@" ;;
+  reply)   cmd_reply "$@" ;;
+  rm)      cmd_rm "$@" ;;
+  whoami)  cmd_whoami "$@" ;;
+  setup)   cmd_setup "$@" ;;
+  *)       usage ;;
+esac
