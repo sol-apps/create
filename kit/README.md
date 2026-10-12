@@ -43,7 +43,9 @@ waits until it is live.
 - `adopt-app` — run by hand, once per app: takes an app that already runs on this box
   at another address and makes it one of these (new address, old one redirects, shared
   password). Its data and port are untouched; `--rollback` undoes it.
-- `install.sh` — installs those five, keeps what they replace under
+- `remove-app` — run by hand: archives an app's data under `/var/backups/solhann/`,
+  then takes the app off the box. Says what it would do unless given `--yes`.
+- `install.sh` — installs those six, keeps what they replace under
   `/var/backups/solhann/`, and has `--rollback`.
 
 They go by two files on prod: `/etc/solhann/conf` (the domain) and `/etc/solhann/apps`

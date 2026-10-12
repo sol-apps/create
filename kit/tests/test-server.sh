@@ -35,13 +35,14 @@ rewrite() {
       -e "s#^\( *\)sleep 1\$#\1sleep 0#" "$1" > "$2"
   chmod +x "$2"
 }
-for t in install.sh owner-lane owner-app owner-password owner-env adopt-app; do rewrite "$SRC/$t" "$STAGE/$t"; done
+for t in install.sh owner-lane owner-app owner-password owner-env adopt-app remove-app; do rewrite "$SRC/$t" "$STAGE/$t"; done
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$S/$1"; chmod +x "$S/$1"; }
 stub rrsync         'printf "%s|%s\n" "$*" "$SSH_ORIGINAL_COMMAND" >> "'"$L"'/rrsync"'
 stub pocketbase     'printf "%s\n" "$*" >> "'"$L"'/pocketbase"; env | grep -E "^(GREENLIGHT|OIDC)_" >> "'"$L"'/pocketbase.env"; exit 0'
 stub id             'if [ "$1" = -u ] && [ -z "${2:-}" ]; then echo 0; elif grep -qx "${2:-}" "'"$T"'/users" 2>/dev/null; then echo 999; else exit 1; fi'
 stub useradd        'echo "${@: -1}" >> "'"$T"'/users"'
+stub userdel        'grep -vx "$1" "'"$T"'/users" > "'"$T"'/users.new"; mv "'"$T"'/users.new" "'"$T"'/users"'
 stub setfacl        ':'
 stub chown          ':'
 stub visudo         'exit "${VISUDO_RC:-0}"'
@@ -108,7 +109,7 @@ has "conf names the domain" "$(cat "$CONF")" "DOMAIN=solhann.net"
 has "conf points at the neighbour's list of names" "$(cat "$CONF")" "TAKEN_HOSTS=$T/etc/neighbour/hosts"
 has "and at the box's git host" "$(cat "$CONF")" "TAKEN_FORGE=http://forge.test/api/v1/repos/sol-apps"
 is "apps lists exactly our apps that have a PocketBase" "$(sort "$APPS" | tr '\n' ',')" "aba aba.solhann.net,cymbal cymbal.solhann.net,expenses expenses.solhann.net,"
-for t in owner-lane owner-app owner-password owner-env adopt-app; do
+for t in owner-lane owner-app owner-password owner-env adopt-app remove-app; do
   if cmp -s "$STAGE/$t" "$B/$t"; then ok "$t installed"; else bad "$t installed"; fi
 done
 has "the sudoers rule allows owner-app and owner-env" "$(cat "$T/etc/sudoers.d/owner-lane")" "NOPASSWD: $B/owner-app, $B/owner-env"
@@ -257,6 +258,36 @@ out=$("$B/adopt-app" board --rollback 2>&1); rc=$?
 has "rollback succeeds" "$rc:$out" "✓ board is as it was"
 is "and every file is as it was, our list included" "$(snap)" "$orig"
 has "with its own password back" "$(tail -1 "$L/pocketbase")" "superuser upsert admin@solhann.net theirs-only"
+
+echo "remove-app:"
+mkdir -p "$T/var/lib/pocketbase/newapp/pb_data" "$T/var/www/apps/newapp" "$T/var/www/apps/leaflet" "$T/var/www/apps/coin-toss"
+echo "precious" > "$T/var/lib/pocketbase/newapp/pb_data/data.db"; echo "<h1>hi</h1>" > "$T/var/www/apps/newapp/index.html"; echo "x" > "$T/var/www/apps/leaflet/index.html"
+out=$("$B/remove-app" newapp 2>&1)
+has "without --yes it only says what it would do" "$out" "Nothing changed."
+[ -f "$T/etc/pocketbase/newapp.env" ] && ok "and nothing is removed" || bad "and nothing is removed"
+has "somebody else's app is refused" "$("$B/remove-app" coin-toss --yes 2>&1)" "not one of the solhann apps"
+has "a name the neighbour's list has elsewhere is refused" "$("$B/remove-app" wizard --yes 2>&1)" "served at build.other.example"
+has "a name that is not on the box is refused" "$("$B/remove-app" nosuch --yes 2>&1)" "there is no nosuch on this box"
+out=$(CADDY_RC=1 "$B/remove-app" newapp --yes 2>&1); rc=$?
+has "if Caddy would not validate without it, it stops" "$rc:$out" "nothing removed"
+[ -f "$T/etc/caddy/apps/newapp.caddy" ] && [ -f "$T/var/lib/pocketbase/newapp/pb_data/data.db" ] && ok "with its Caddy block and its data still there" || bad "with its Caddy block and its data still there"
+: > "$L/systemctl"
+out=$("$B/remove-app" newapp --yes 2>&1); rc=$?
+has "an app with a PocketBase is removed" "$rc:$out" "✓ newapp is off this box"
+AR=$(ls -1 "$T"/var/backups/solhann/removed-newapp-*.tar.gz | tail -1)
+has "its data is in the archive" "$(tar -xzOf "$AR" 2>/dev/null | tr -d '\0')" "precious"
+has "its service and watcher are stopped and disabled" "$(tr '\n' ' ' < "$L/systemctl")" "disable --now --quiet pb-migrate@newapp.path disable --now --quiet pocketbase@newapp"
+for f in "$T/etc/pocketbase/newapp.env" "$T/etc/pocketbase/newapp.superuser" "$T/etc/caddy/apps/newapp.caddy" "$T/var/lib/pocketbase/newapp" "$T/var/www/apps/newapp"; do
+  [ -e "$f" ] && bad "$(basename "$f") is gone" || ok "$(basename "$f") is gone"
+done
+hasnt "its user is gone" "$(cat "$T/users")" "pb-newapp"
+hasnt "it is out of our list" "$(cat "$APPS")" "newapp"
+has "the other apps in the list are untouched" "$(cat "$APPS")" "expenses expenses.solhann.net"
+has "the deploy lane no longer takes its server code" "$(lane 'pb-rsync --server -x . newapp/')" "not one of the solhann apps"
+out=$("$B/remove-app" leaflet --yes 2>&1); rc=$?
+has "a site with no PocketBase is archived and removed" "$rc:$out" "✓ leaflet is off this box"
+[ -e "$T/var/www/apps/leaflet" ] && bad "its folder is gone" || ok "its folder is gone"
+[ -d "$T/var/www/apps/coin-toss" ] && ok "somebody else's published folder is untouched" || bad "somebody else's published folder is untouched"
 
 echo "rollback:"
 out=$(bash "$STAGE/install.sh" --rollback 2>&1); rc=$?

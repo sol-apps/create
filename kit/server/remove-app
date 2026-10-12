@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# remove-app <slug> --yes — take one of the solhann apps off this box. Root, by hand:
+#
+#   ssh -t prod 'sudo remove-app <slug> --yes'
+#
+# For an app with a PocketBase (one in /etc/solhann/apps): its data directory is
+# archived to /var/backups/solhann/removed-<slug>-<time>.tar.gz FIRST, and nothing is
+# removed unless that archive was written. Then its service and migrations watcher are
+# stopped and disabled, and its Caddy block, environment and password files, data,
+# hooks and migrations, user, published site and line in /etc/solhann/apps are removed.
+#
+# For a site with no PocketBase: its published folder is archived the same way and
+# removed. A name the list in TAKEN_HOSTS (/etc/solhann/conf) gives to something else is
+# refused either way.
+#
+# The repository on GitHub is not touched: archive or delete it there, or the next push
+# simply creates the app again. Without --yes it only says what it would do.
+set -euo pipefail
+
+ETC=/etc/pocketbase
+LIB=/var/lib/pocketbase
+WWW=/var/www/apps
+CADDY_APPS=/etc/caddy/apps
+CADDYFILE=/etc/caddy/Caddyfile
+CONF=/etc/solhann/conf
+APPS=/etc/solhann/apps
+BKROOT=/var/backups/solhann
+
+die() { echo "✗ remove-app: $*" >&2; exit 1; }
+[ "$(id -u)" = 0 ] || die "run as root"
+SLUG="${1:-}"
+YES=0
+case "$#:${2:-}" in
+  1:) ;;
+  2:--yes) YES=1 ;;
+  *) die "usage: remove-app <slug> [--yes]" ;;
+esac
+[[ "$SLUG" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] && [ "${#SLUG}" -le 63 ] || die "invalid slug '$SLUG'"
+
+conf() { sed -n "s/^$1=//p" "$CONF" 2>/dev/null | tail -1; }
+DOMAIN=$(conf DOMAIN)
+[ -n "$DOMAIN" ] || die "$CONF names no DOMAIN"
+HOST="$SLUG.$DOMAIN"
+TAKEN_HOSTS=$(conf TAKEN_HOSTS)
+ENVF="$ETC/$SLUG.env"
+CADDYF="$CADDY_APPS/$SLUG.caddy"
+
+if [ -n "$TAKEN_HOSTS" ]; then
+  t=$(awk -v s="$SLUG" '$1 == s { print $2; exit }' "$TAKEN_HOSTS" 2>/dev/null || true)
+  [ -z "$t" ] || [ "$t" = "$HOST" ] || die "$SLUG is served at $t: it is not one of the solhann apps"
+fi
+recorded=$(awk -v s="$SLUG" '$1 == s { print $2; exit }' "$APPS" 2>/dev/null || true)
+HAS_PB=0
+if [ -f "$ENVF" ]; then
+  [ "$recorded" = "$HOST" ] || die "$SLUG has a PocketBase here but is not in $APPS: it is not one of the solhann apps"
+  HAS_PB=1
+  if [ -f "$CADDYF" ]; then
+    s=$(awk 'NF && $1 !~ /^#/ { gsub(/,/, "", $1); print $1; exit }' "$CADDYF")
+    [ "$s" = "$HOST" ] || die "$SLUG's Caddy block serves $s, not $HOST; look at it by hand"
+  fi
+elif [ ! -d "$WWW/$SLUG" ]; then
+  die "there is no $SLUG on this box"
+fi
+
+if [ "$YES" != 1 ]; then
+  if [ "$HAS_PB" = 1 ]; then
+    echo "$SLUG (https://$HOST) has a PocketBase. With --yes: its data is archived under $BKROOT,"
+    echo "then its service, Caddy block, files, user and published site are removed."
+  else
+    echo "$SLUG is a site with no PocketBase. With --yes: $WWW/$SLUG is archived under $BKROOT and removed."
+  fi
+  echo "Nothing changed."
+  exit 0
+fi
+
+install -d -m 700 -o root -g root "$BKROOT"
+STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+ARCHIVE="$BKROOT/removed-$SLUG-$STAMP.tar.gz"
+
+if [ "$HAS_PB" = 1 ]; then
+  # Stop it first so the archive is of a database nobody is writing to.
+  systemctl disable --now --quiet "pb-migrate@$SLUG.path" 2>/dev/null || true
+  systemctl disable --now --quiet "pocketbase@$SLUG" 2>/dev/null || true
+  what=()
+  [ -d "$LIB/$SLUG" ] && what+=("$LIB/$SLUG")
+  [ -d "$WWW/$SLUG" ] && what+=("$WWW/$SLUG")
+  what+=("$ENVF")
+  [ -f "$CADDYF" ] && what+=("$CADDYF")
+  ( umask 077; tar -czf "$ARCHIVE" "${what[@]}" 2>/dev/null ) && [ -s "$ARCHIVE" ] \
+    || { systemctl enable --now --quiet "pocketbase@$SLUG" 2>/dev/null || true
+         die "could not write $ARCHIVE; nothing removed, and the app is started again"; }
+  echo "▸ archived its data, site and settings to $ARCHIVE"
+
+  if [ -f "$CADDYF" ]; then
+    mv "$CADDYF" "$BKROOT/removed-$SLUG-$STAMP.caddy"
+    if (
+      while IFS= read -r line; do
+        case "$line" in
+          EnvironmentFile=*) f="${line#EnvironmentFile=}"; f="${f#-}"; [ -f "$f" ] && set -a && . "$f" && set +a ;;
+          Environment=*)     eval "export ${line#Environment=}" ;;
+        esac
+      done < <(systemctl cat caddy 2>/dev/null | grep -E '^(EnvironmentFile|Environment)=' || true)
+      caddy validate --config "$CADDYFILE" >/dev/null 2>&1
+    ); then
+      systemctl reload caddy
+      echo "▸ Caddy no longer serves https://$HOST"
+    else
+      mv "$BKROOT/removed-$SLUG-$STAMP.caddy" "$CADDYF"
+      systemctl enable --now --quiet "pocketbase@$SLUG" 2>/dev/null || true
+      die "Caddy's config does not validate without $SLUG's block; block put back, app started again, nothing removed"
+    fi
+  fi
+  rm -rf "${LIB:?}/$SLUG"
+  rm -f "$ENVF" "$ETC/$SLUG.superuser" "$ETC/$SLUG.owner-app"
+  id -u "pb-$SLUG" >/dev/null 2>&1 && userdel "pb-$SLUG" 2>/dev/null || true
+  tmp=$(mktemp); awk -v s="$SLUG" '$1 != s' "$APPS" > "$tmp"; install -m 644 -o root -g root "$tmp" "$APPS"; rm -f "$tmp"
+  echo "▸ removed its PocketBase, its user and its line in $APPS"
+else
+  ( umask 077; tar -czf "$ARCHIVE" "$WWW/$SLUG" 2>/dev/null ) && [ -s "$ARCHIVE" ] \
+    || die "could not write $ARCHIVE; nothing removed"
+  echo "▸ archived its site to $ARCHIVE"
+fi
+rm -rf "${WWW:?}/$SLUG"
+echo "✓ $SLUG is off this box. Its repository on GitHub is as it was: archive or delete it"
+echo "  there, or the next push creates the app again."
