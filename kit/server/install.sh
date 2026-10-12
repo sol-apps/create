@@ -164,7 +164,8 @@ while read -r s h _; do
 done < "$APPS"
 
 # ── 4. the lane as a deploy meets it ────────────────────────────────────────
-lane() { sudo -u sol env SSH_ORIGINAL_COMMAND="$1" /usr/local/bin/owner-lane </dev/null 2>&1 || true; }
+# tr: the rsync server's reply carries a null byte, which bash would warn about.
+lane() { sudo -u sol env SSH_ORIGINAL_COMMAND="$1" /usr/local/bin/owner-lane </dev/null 2>&1 | tr -d '\0' || true; }
 pass=0; fail=0
 expect() { # expect <label> <text the answer must contain> <answer>
   case "$3" in
