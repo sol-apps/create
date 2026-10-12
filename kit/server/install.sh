@@ -9,7 +9,8 @@
 #    box has) and /etc/solhann/apps (the apps: "<slug> <host>"). Both are made once and
 #    then left alone. The first time, apps is filled from the record the box already
 #    keeps: every app recorded at <slug>.<DOMAIN> that has a PocketBase.
-# 2. installs owner-lane, owner-app, owner-password and owner-env in /usr/local/bin, and
+# 2. installs owner-lane, owner-app, owner-password, owner-env and adopt-app (run by
+#    hand, to take over an app that already lives on this box) in /usr/local/bin, and
 #    the sudoers rule that lets sol run owner-app (the deploy) and owner-env
 #    (push-secrets). What they replace is kept under /var/backups/solhann/.
 # 3. takes settings these apps no longer read out of their environment files.
@@ -28,7 +29,7 @@ CONF=$CONFDIR/conf
 APPS=$CONFDIR/apps
 SUDOF=/etc/sudoers.d/owner-lane
 BKROOT=/var/backups/solhann
-TOOLS="owner-lane owner-app owner-password owner-env"
+TOOLS="owner-lane owner-app owner-password owner-env adopt-app"
 DEFAULT_DOMAIN=solhann.net
 # Looked at once, to write conf and to fill apps; the scripts go by /etc/solhann only.
 NEIGHBOUR_HOSTS=/etc/greenlight/hosts
@@ -68,7 +69,7 @@ for t in $TOOLS; do
   [ -f "$HERE/$t" ] || die "$HERE/$t is missing; stage the folder whole"
 done
 sh -n "$HERE/owner-lane"
-for t in owner-app owner-password owner-env; do bash -n "$HERE/$t"; done
+for t in owner-app owner-password owner-env adopt-app; do bash -n "$HERE/$t"; done
 grep -qF 'command="/usr/local/bin/owner-lane"' "$AK" \
   || die "the deploy key does not run owner-lane in $AK; nothing changed"
 [ -s "$ETC/owner.superuser" ] \

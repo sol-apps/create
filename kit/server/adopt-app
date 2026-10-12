@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# adopt-app <slug> --from <host> — make an app that already runs on this box, at another
+# address, one of the solhann apps. Root. Its PocketBase, data and port stay exactly as
+# they are; what changes is where it is served and who looks after it:
+#
+#   ssh -t prod 'sudo adopt-app forum --from forum.greenlit.page'
+#   ssh -t prod 'sudo adopt-app forum --rollback'
+#
+# 1. its Caddy block now serves <slug>.<DOMAIN>, and <host> redirects there for good;
+# 2. a block elsewhere in Caddy's config that answers for <slug>.<DOMAIN> already (an old
+#    name retired with "410 Gone", say) is taken out, since two cannot serve one name;
+# 3. it is recorded in /etc/solhann/apps, and its line is taken out of the list named by
+#    TAKEN_HOSTS in /etc/solhann/conf, so nothing else on the box treats it as its own;
+# 4. settings left in its environment file by whatever ran it before are removed;
+# 5. it takes the shared /_/ password, like every other app (owner-password --apply).
+#
+# --from must be the address it is served at now, so nothing is adopted by accident.
+# Caddy's config is validated before it is reloaded and put back if it does not pass.
+# Every file touched is first copied to /var/backups/solhann/adopt-<slug>-<time>/, and
+# --rollback puts them all back. The app is never stopped and its data is never touched.
+set -euo pipefail
+
+PB_BIN=/usr/local/bin/pocketbase
+ETC=/etc/pocketbase
+LIB=/var/lib/pocketbase
+CADDY_DIR=/etc/caddy
+CADDY_APPS=/etc/caddy/apps
+CADDYFILE=/etc/caddy/Caddyfile
+CONF=/etc/solhann/conf
+APPS=/etc/solhann/apps
+BKROOT=/var/backups/solhann
+STALE='^(GREENLIGHT_[A-Z0-9_]*|OIDC_[A-Z0-9_]*)='
+
+die() { echo "✗ adopt-app: $*" >&2; exit 1; }
+usage() { die "usage: adopt-app <slug> --from <host>   |   adopt-app <slug> --rollback"; }
+[ "$(id -u)" = 0 ] || die "run as root"
+SLUG="${1:-}"
+[[ "$SLUG" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] && [ "${#SLUG}" -le 28 ] || usage
+host_re='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+
+conf() { sed -n "s/^$1=//p" "$CONF" 2>/dev/null | tail -1; }
+DOMAIN=$(conf DOMAIN)
+[[ "$DOMAIN" =~ $host_re ]] || die "$CONF names no DOMAIN"
+TAKEN_HOSTS=$(conf TAKEN_HOSTS)
+HOST="$SLUG.$DOMAIN"
+ENVF="$ETC/$SLUG.env"
+CADDYF="$CADDY_APPS/$SLUG.caddy"
+
+served() { awk 'NF && $1 !~ /^#/ { gsub(/,/, "", $1); print $1; exit }' "$1" 2>/dev/null || true; }
+recorded() { awk -v s="$SLUG" '$1 == s { print $2; exit }' "$APPS" 2>/dev/null || true; }
+
+# caddy validate needs the caddy service's environment (its DNS token).
+caddy_ok() {
+  (
+    while IFS= read -r line; do
+      case "$line" in
+        EnvironmentFile=*) f="${line#EnvironmentFile=}"; f="${f#-}"; [ -f "$f" ] && set -a && . "$f" && set +a ;;
+        Environment=*)     eval "export ${line#Environment=}" ;;
+      esac
+    done < <(systemctl cat caddy 2>/dev/null | grep -E '^(EnvironmentFile|Environment)=' || true)
+    caddy validate --config "$CADDYFILE" >/dev/null 2>&1
+  )
+}
+
+# ── rollback ────────────────────────────────────────────────────────────────
+if [ "${2:-}" = --rollback ]; then
+  [ "$#" = 2 ] || usage
+  BK=$(ls -1d "$BKROOT/adopt-$SLUG-"* 2>/dev/null | sort | tail -1)
+  [ -n "$BK" ] || die "no adoption of $SLUG is recorded under $BKROOT; nothing changed"
+  while IFS='|' read -r saved orig; do
+    [ -n "$saved" ] || continue
+    install -m "$(stat -c %a "$BK/$saved")" "$BK/$saved" "$orig"
+    echo "▸ restored $orig"
+  done < "$BK/files"
+  if [ -f "$APPS" ]; then
+    tmp=$(mktemp); awk -v s="$SLUG" '$1 != s' "$APPS" > "$tmp"; install -m 644 -o root -g root "$tmp" "$APPS"; rm -f "$tmp"
+  fi
+  caddy_ok || die "Caddy's config does not validate with the old files back; look at it before reloading"
+  systemctl reload caddy
+  if [ -f "$BK/superuser.email" ] && [ -s "$ETC/$SLUG.superuser" ]; then
+    sudo -u "pb-$SLUG" "$PB_BIN" superuser upsert "$(cat "$BK/superuser.email")" "$(cat "$ETC/$SLUG.superuser")" \
+      --dir "$LIB/$SLUG/pb_data" --hooksDir "$LIB/$SLUG/pb_hooks" --migrationsDir "$LIB/$SLUG/pb_migrations" \
+      >/dev/null </dev/null && echo "▸ its own /_/ password is back"
+  fi
+  echo "✓ $SLUG is as it was before it was adopted (from $BK)"
+  exit 0
+fi
+
+# ── what is being adopted ───────────────────────────────────────────────────
+[ "$#" = 3 ] && [ "${2:-}" = --from ] || usage
+FROM="$3"
+[[ "$FROM" =~ $host_re ]] || die "'$FROM' is not a host name"
+[ "$FROM" != "$HOST" ] || die "--from is the address it is moving away from, not $HOST"
+[ -f "$ENVF" ] || die "$SLUG has no PocketBase on this box (no $ENVF)"
+PB_PORT=$(sed -n 's/^PB_PORT=//p' "$ENVF" | tail -1)
+[[ "$PB_PORT" =~ ^[0-9]+$ ]] || die "$ENVF has no PB_PORT"
+id -u "pb-$SLUG" >/dev/null 2>&1 || die "there is no pb-$SLUG user"
+[ -f "$CADDYF" ] || die "$SLUG has no Caddy block ($CADDYF)"
+[ -s "$ETC/owner.superuser" ] || die "no shared /_/ password yet (sudo owner-password)"
+NOW=$(served "$CADDYF")
+if [ "$NOW" = "$HOST" ] && [ "$(recorded)" = "$HOST" ]; then
+  echo "✓ $SLUG is already one of the solhann apps — https://$HOST"
+  exit 0
+fi
+[ "$NOW" = "$FROM" ] || die "$SLUG is served at ${NOW:-nothing}, not $FROM; nothing changed"
+curl -fsS -m 5 "http://127.0.0.1:$PB_PORT/api/health" >/dev/null 2>&1 \
+  || die "$SLUG's PocketBase is not answering on 127.0.0.1:$PB_PORT; fix that first"
+
+# ── backups ─────────────────────────────────────────────────────────────────
+install -d -m 700 -o root -g root "$BKROOT"
+# One folder per run, even for two runs in the same second.
+BK=$(mktemp -d "$BKROOT/adopt-$SLUG-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
+: > "$BK/files"
+keep() { # keep <file> — copy it into the backup once, and note where it came from
+  local n; n=$(printf '%s' "$1" | tr '/' '_')
+  [ -f "$BK/$n" ] && return 0
+  cp -p "$1" "$BK/$n"
+  printf '%s|%s\n' "$n" "$1" >> "$BK/files"
+}
+restore_all() {
+  while IFS='|' read -r saved orig; do
+    [ -n "$saved" ] && install -m "$(stat -c %a "$BK/$saved")" "$BK/$saved" "$orig"
+  done < "$BK/files"
+}
+
+# ── 1 + 2. Caddy ────────────────────────────────────────────────────────────
+keep "$CADDYF"
+# A block that already answers for the new name, in any other file Caddy loads.
+OTHER=$(grep -rlE "^$(printf '%s' "$HOST" | sed 's/\./\\./g')[[:space:]]*\{" "$CADDY_DIR" 2>/dev/null | grep -vxF "$CADDYF" || true)
+for f in $OTHER; do
+  keep "$f"
+  tmp=$(mktemp)
+  # Drop the block: from its opening line to the first line that is just "}".
+  awk -v h="$HOST" '
+    !skip && $1 == h && $2 == "{" { skip = 1; dropped = 1; next }
+    skip { if ($0 == "}") skip = 0; next }
+    { print }
+    END { if (skip || !dropped) exit 3 }' "$f" > "$tmp" \
+    || { rm -f "$tmp"; die "could not take the $HOST block out of $f cleanly; nothing changed"; }
+  install -m "$(stat -c %a "$f")" "$tmp" "$f"; rm -f "$tmp"
+  echo "▸ took the old $HOST block out of $f"
+done
+
+cat > "$CADDYF" <<CADDY_EOF
+$HOST {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+	# Everything (statics included) is served by PocketBase; no-cache makes
+	# deploys visible immediately (ETag revalidation, cheap 304s). defer so
+	# it overrides anything the upstream sets.
+	header {
+		Cache-Control "no-cache"
+		defer
+	}
+	handle /_/* {
+		import pb_admin_guard $PB_PORT
+	}
+	handle {
+		reverse_proxy 127.0.0.1:$PB_PORT
+	}
+}
+
+# Its address until $(date -u +%Y-%m-%d). Links to it still arrive.
+$FROM {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+	redir https://$HOST{uri} permanent
+}
+CADDY_EOF
+if caddy_ok; then
+  systemctl reload caddy
+  echo "▸ Caddy serves https://$HOST, and https://$FROM redirects to it"
+else
+  restore_all
+  rm -rf "$BK"
+  die "Caddy's config did not validate with the new block; every file is back as it was, Caddy untouched"
+fi
+
+# ── 3. whose it is ──────────────────────────────────────────────────────────
+if [ -n "$TAKEN_HOSTS" ] && awk -v s="$SLUG" '$1 == s { f = 1 } END { exit !f }' "$TAKEN_HOSTS" 2>/dev/null; then
+  keep "$TAKEN_HOSTS"
+  tmp=$(mktemp); awk -v s="$SLUG" '$1 != s' "$TAKEN_HOSTS" > "$tmp"
+  install -m "$(stat -c %a "$TAKEN_HOSTS")" "$tmp" "$TAKEN_HOSTS"; rm -f "$tmp"
+  echo "▸ took $SLUG out of $TAKEN_HOSTS"
+fi
+if [ -z "$(recorded)" ]; then
+  ( flock 8; printf '%s %s\n' "$SLUG" "$HOST" >> "$APPS" ) 8>>"$APPS"
+  chmod 644 "$APPS"
+  echo "▸ recorded $SLUG in $APPS"
+fi
+
+# ── 4. settings nothing of ours reads ───────────────────────────────────────
+if grep -qE "$STALE" "$ENVF"; then
+  keep "$ENVF"
+  names=$(grep -oE "$STALE" "$ENVF" | tr -d '=' | sort | tr '\n' ' ')
+  tmp=$(mktemp); grep -vE "$STALE" "$ENVF" > "$tmp" || true
+  install -m 600 -o root -g root "$tmp" "$ENVF"; rm -f "$tmp"
+  echo "▸ removed ${names% } from its environment file (it is not restarted)"
+fi
+
+# ── 5. the shared password ──────────────────────────────────────────────────
+[ -f "$ETC/$SLUG.superuser" ] && keep "$ETC/$SLUG.superuser"
+printf 'admin@%s\n' "$DOMAIN" > "$BK/superuser.email"
+applied=$(/usr/local/bin/owner-password --apply 2>&1 || true)
+case "$applied" in
+  *"✓ https://$HOST/_/"*) echo "▸ it takes the shared /_/ password" ;;
+  *) echo "  ! the shared password was not applied to $SLUG; run: sudo owner-password --apply" ;;
+esac
+
+echo "✓ $SLUG is one of the solhann apps: https://$HOST (/_/: admin@$DOMAIN, the shared password)"
+echo "  Its first request may wait a minute for the new certificate. To undo all of this:"
+echo "    sudo adopt-app $SLUG --rollback        (backup: $BK)"

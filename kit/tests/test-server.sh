@@ -35,7 +35,7 @@ rewrite() {
       -e "s#^\( *\)sleep 1\$#\1sleep 0#" "$1" > "$2"
   chmod +x "$2"
 }
-for t in install.sh owner-lane owner-app owner-password owner-env; do rewrite "$SRC/$t" "$STAGE/$t"; done
+for t in install.sh owner-lane owner-app owner-password owner-env adopt-app; do rewrite "$SRC/$t" "$STAGE/$t"; done
 
 stub() { printf '#!/usr/bin/env bash\n%s\n' "$2" > "$S/$1"; chmod +x "$S/$1"; }
 stub rrsync         'printf "%s|%s\n" "$*" "$SSH_ORIGINAL_COMMAND" >> "'"$L"'/rrsync"'
@@ -45,8 +45,11 @@ stub useradd        'echo "${@: -1}" >> "'"$T"'/users"'
 stub setfacl        ':'
 stub chown          ':'
 stub visudo         'exit "${VISUDO_RC:-0}"'
+# stat -c %a <file>: the mode, as GNU stat prints it.
+stub stat           '[ "$1" = -c ] && exec /usr/bin/stat -f %Lp "$3"; exec /usr/bin/stat "$@"'
+command -v gstat >/dev/null 2>&1 || /usr/bin/stat -c %a / >/dev/null 2>&1 && rm -f "$S/stat"
 stub systemctl      '[ "$1" = cat ] && exit 0; echo "$*" >> "'"$L"'/systemctl"'
-stub caddy          'exit "${CADDY_RC:-0}"'
+stub caddy          'echo "$*" >> "'"$L"'/caddy"; exit "${CADDY_RC:-0}"'
 # sudo: drop -n and -u <user>, run the rest as this user.
 stub sudo           'while [ "$#" -gt 0 ]; do case "$1" in -n) shift ;; -u) shift 2 ;; *) break ;; esac; done; exec "$@"'
 # install: the same, minus ownership.
@@ -105,7 +108,7 @@ has "conf names the domain" "$(cat "$CONF")" "DOMAIN=solhann.net"
 has "conf points at the neighbour's list of names" "$(cat "$CONF")" "TAKEN_HOSTS=$T/etc/neighbour/hosts"
 has "and at the box's git host" "$(cat "$CONF")" "TAKEN_FORGE=http://forge.test/api/v1/repos/sol-apps"
 is "apps lists exactly our apps that have a PocketBase" "$(sort "$APPS" | tr '\n' ',')" "aba aba.solhann.net,cymbal cymbal.solhann.net,expenses expenses.solhann.net,"
-for t in owner-lane owner-app owner-password owner-env; do
+for t in owner-lane owner-app owner-password owner-env adopt-app; do
   if cmp -s "$STAGE/$t" "$B/$t"; then ok "$t installed"; else bad "$t installed"; fi
 done
 has "the sudoers rule allows owner-app and owner-env" "$(cat "$T/etc/sudoers.d/owner-lane")" "NOPASSWD: $B/owner-app, $B/owner-env"
@@ -195,6 +198,66 @@ has "it applies to our apps" "$rc:$out" "app(s) take admin@solhann.net"
 has "each one" "$(cat "$L/pocketbase")" "--dir $T/var/lib/pocketbase/aba/pb_data"
 hasnt "and to nobody else's" "$(cat "$L/pocketbase")" "coin-toss"
 
+echo "adopt-app:"
+# An app somebody else runs on this box, about to become ours: served at another
+# address, in the neighbour's list, with settings of theirs in its environment, and its
+# future name already answered by a "retired" block in another Caddy file.
+printf 'PB_PORT=8110\nGREENLIGHT_ACCESS_MODE=public\nKEEP_ME=1\n' > "$T/etc/pocketbase/board.env"
+printf 'board.other.example {\n\theader {\n\t\t?Content-Security-Policy "frame-ancestors x"\n\t}\n\treverse_proxy 127.0.0.1:8110\n}\n' > "$T/etc/caddy/apps/board.caddy"
+printf 'theirs-only\n' > "$T/etc/pocketbase/board.superuser"
+echo "pb-board" >> "$T/users"; mkdir -p "$T/var/lib/pocketbase/board"
+echo "board board.other.example" >> "$T/etc/neighbour/hosts"
+cat > "$T/etc/caddy/retired.caddy" <<'EOF'
+before.solhann.net {
+	respond "Gone" 410
+}
+board.solhann.net {
+	tls {
+		dns cloudflare {env.CF_API_TOKEN}
+	}
+	respond "Gone" 410
+}
+after.solhann.net {
+	respond "Gone" 410
+}
+EOF
+snap() { cat "$T/etc/caddy/apps/board.caddy" "$T/etc/caddy/retired.caddy" "$T/etc/neighbour/hosts" "$T/etc/pocketbase/board.env" "$T/etc/pocketbase/board.superuser" "$APPS" | cksum; }
+orig=$(snap)
+has "it will not take somebody else's app from the deploy lane first" "$(lane 'provision board')" "not one of the solhann apps"
+has "the address it is served at must be named" "$("$B/adopt-app" board --from wrong.other.example 2>&1)" "is served at board.other.example, not wrong.other.example"
+has "an app that is down is not adopted" "$(HEALTH=500 "$B/adopt-app" board --from board.other.example 2>&1)" "is not answering"
+has "an app with no PocketBase here is not adopted" "$("$B/adopt-app" nosuch --from nosuch.other.example 2>&1)" "has no PocketBase on this box"
+out=$(CADDY_RC=1 "$B/adopt-app" board --from board.other.example 2>&1); rc=$?
+has "a Caddy config that does not validate stops it" "$rc:$out" "did not validate"
+is "and every file is as it was" "$(snap)" "$orig"
+: > "$L/systemctl"; : > "$L/pocketbase"
+out=$("$B/adopt-app" board --from board.other.example 2>&1); rc=$?
+has "it is adopted" "$rc:$out" "✓ board is one of the solhann apps: https://board.solhann.net"
+cf=$(cat "$T/etc/caddy/apps/board.caddy")
+is "its Caddy block serves the new address first" "$(printf '%s\n' "$cf" | head -1)" "board.solhann.net {"
+has "on the same port" "$cf" "reverse_proxy 127.0.0.1:8110"
+has "the old address redirects, path and all" "$cf" "redir https://board.solhann.net{uri} permanent"
+hasnt "the previous owner's header is gone" "$cf" "frame-ancestors"
+ret=$(cat "$T/etc/caddy/retired.caddy")
+hasnt "the block that answered for the new name is gone" "$ret" "board.solhann.net"
+has "the block before it is kept" "$ret" "before.solhann.net {"
+has "and the one after it" "$ret" "after.solhann.net {"
+is "exactly its lines were removed" "$(printf '%s\n' "$ret" | grep -c .)" "6"
+has "Caddy is reloaded" "$(cat "$L/systemctl")" "reload caddy"
+has "it is in our list" "$(cat "$APPS")" "board board.solhann.net"
+hasnt "and out of the neighbour's" "$(cat "$T/etc/neighbour/hosts")" "board"
+has "the neighbour's other lines are untouched" "$(cat "$T/etc/neighbour/hosts")" "coin-toss coin-toss.other.example"
+is "its port and its own settings stay; the previous owner's go" "$(tr '\n' ',' < "$T/etc/pocketbase/board.env")" "PB_PORT=8110,KEEP_ME=1,"
+has "it takes the shared password" "$(cat "$L/pocketbase")" "superuser upsert admin@solhann.net old-secret --dir $T/var/lib/pocketbase/board/pb_data"
+hasnt "it is never restarted" "$(cat "$L/systemctl")" "restart"
+has "the deploy lane now knows it" "$(lane 'provision board')" "already set up"
+has "and takes its server code" "$(lane 'pb-rsync --server -x . board/'; tail -1 "$L/jail")" "board|rsync --server -x . board/"
+has "a second run has nothing to do" "$("$B/adopt-app" board --from board.other.example 2>&1)" "already one of the solhann apps"
+out=$("$B/adopt-app" board --rollback 2>&1); rc=$?
+has "rollback succeeds" "$rc:$out" "✓ board is as it was"
+is "and every file is as it was, our list included" "$(snap)" "$orig"
+has "with its own password back" "$(tail -1 "$L/pocketbase")" "superuser upsert admin@solhann.net theirs-only"
+
 echo "rollback:"
 out=$(bash "$STAGE/install.sh" --rollback 2>&1); rc=$?
 is "it succeeds" "$rc" 0
@@ -204,8 +267,8 @@ if cmp -s "$LAST/owner-lane" "$B/owner-lane"; then ok "owner-lane is the one in 
 
 echo "the scripts themselves:"
 if grep -rIqiE 'greenlight|greenlit' "$SRC/owner-lane" "$SRC/owner-app" "$SRC/owner-password" "$SRC/owner-env"; then
-  bad "the four installed scripts name no other system"
-else ok "the four installed scripts name no other system"; fi
+  bad "the four everyday scripts name no other system"
+else ok "the four everyday scripts name no other system"; fi
 is "install.sh names the neighbour's files in one place only" "$(grep -cE '^NEIGHBOUR_' "$SRC/install.sh")" "3"
 
 echo

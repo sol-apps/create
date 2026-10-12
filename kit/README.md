@@ -38,7 +38,10 @@ waits until it is live.
 - `owner-app` — gives a new app its PocketBase. A no-op once it has one.
 - `owner-password` — the one dashboard password, typed on prod and never read back.
 - `owner-env` — replaces an app's runtime secrets; `push-secrets` calls it.
-- `install.sh` — installs those four, keeps what they replace under
+- `adopt-app` — run by hand, once per app: takes an app that already runs on this box
+  at another address and makes it one of these (new address, old one redirects, shared
+  password). Its data and port are untouched; `--rollback` undoes it.
+- `install.sh` — installs those five, keeps what they replace under
   `/var/backups/solhann/`, and has `--rollback`.
 
 They go by two files on prod: `/etc/solhann/conf` (the domain) and `/etc/solhann/apps`
